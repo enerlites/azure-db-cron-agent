@@ -4,3 +4,4 @@
 .vscode
 /skuPromoAuto/.env
 /local.settings.json
+__pycache__
