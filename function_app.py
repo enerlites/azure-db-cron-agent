@@ -2,10 +2,14 @@ import logging
 import azure.functions as func
 from azureApp import *          # sku promo module 
 
+app = func.FunctionApp()
+
 '''
 auto oneDrive azure read / write in monthly basis 
 '''
-def monthly_sku_promo_task(sku_promo_db_cron: func.TimerRequest) -> None:
+@app.function_name(name="monthlySkuPromoTask")
+@app.schedule(schedule="0 30 0 15 * *", arg_name="monthlyPromoCron", run_on_startup=True, use_monitor=True)
+def monthly_sku_promo_task(monthlyPromoCron: func.TimerRequest) -> None:
     # Log that the function is starting
     logging.info(f'========================= Monthly db sku promo cron job started ! =========================\n')
     
@@ -21,5 +25,7 @@ def monthly_sku_promo_task(sku_promo_db_cron: func.TimerRequest) -> None:
 '''
 Automate potential ERP reports to Azure
 '''
-def monthly_erp_task(erp_db_cron: func.TimerRequest) -> None:
+@app.function_name(name="monthlyERPTask")
+@app.schedule(schedule="0 0 1 15 * *", arg_name="monthlyERPCron", run_on_startup=True, use_monitor=True)
+def monthly_erp_task(monthlyERPCron: func.TimerRequest) -> None:
     pass
