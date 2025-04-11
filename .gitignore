@@ -1,0 +1,6 @@
+.env
+.DS_Store
+/data/
+.vscode
+/skuPromoAuto/.env
+/local.settings.json

@@ -1,0 +1,8 @@
+azure-functions
+msal
+requests
+pandas
+openpyxl
+python-dotenv
+sqlalchemy
+pyodbc
