@@ -56,7 +56,7 @@ class OneDriveFlatFileReader:
             # List all available drives (including personal OneDrive)
             response = requests.get(url, headers=headers, timeout=30)
             if response.status_code == 200:
-                print(f"\n{self.user_principal} exists with drive id = \'{response.json()["id"]}\'\n")
+                print(f"\n{self.user_principal} exists with drive id = \'{response.json()['id']}\'\n")
                 return response.json()["id"]
             elif response.status_code == 404:
                 raise Exception("OneDrive not found. It may not be provisioned yet.")
@@ -134,7 +134,7 @@ class OneDriveFlatFileReader:
 class AzureDBWriter():
     def __init__(self, df, tableCols):
         load_dotenv()           # load the .env vars
-        self.DB_CONN = f"mssql+pyodbc://sqladmin:{urllib.parse.quote_plus(os.getenv("DB_PASS"))}@{os.getenv("DB_SERVER")}:1433/enerlitesDB?driver=ODBC+Driver+17+for+SQL+Server&encrypt=yes"
+        self.DB_CONN = f"mssql+pyodbc://sqladmin:{urllib.parse.quote_plus(os.getenv('DB_PASS'))}@{os.getenv('DB_SERVER')}:1433/enerlitesDB?driver=ODBC+Driver+17+for+SQL+Server&encrypt=yes"
         self.myDf = df 
         self.myCols = tableCols
         
