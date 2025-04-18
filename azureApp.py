@@ -10,12 +10,12 @@ import pandas as pd
 from io import BytesIO
 from dotenv import load_dotenv
 from urllib.parse import quote
-# from IPython import display
 from sqlalchemy import create_engine
 import urllib.parse
 import schedule 
 import time 
 from datetime import datetime
+from IPython.display import display
 
 # OneDrive class for all oneDrive functionalities
 class OneDriveFlatFileReader:
@@ -141,8 +141,12 @@ class AzureDBWriter():
     # OceanAir Inventory google xlsx sheet preprocessing (inplace operation)
     # Skip the first 3 rows and only read in len(tableCols) -1 cols
     def oceanAir_Inv_preprocess(self):
-        self.myDf = self.myDf.iloc[2:, :len(self.myCols) - 1]
-        numeric_cols = self.myDf.columns[5:-1]
+        # parse from object to date
+        inv_eval_dt = pd.to_datetime(self.myDf.columns[3], format = 'mixed').date()
+        dt_df = pd.DataFrame({"dt": [inv_eval_dt] * self.myDf.shape[0]})
+        data = self.myDf.iloc[2:, :len(self.myCols) - 2]
+        self.myDf = pd.concat([dt_df, data], axis = 1)
+        numeric_cols = self.myDf.columns[6:-1]
         self.myDf[numeric_cols] = self.myDf[numeric_cols].astype('Int64')
         return self
         
@@ -163,8 +167,9 @@ class AzureDBWriter():
                 df["Promotion Reason"] = df["Promotion Reason"].apply(lambda x: 'Discontinued' if x == 'Disontinued' else x)
             elif "promo category" in df.columns:
                 df["promo category"] = df["promo category"].apply(lambda x: 'Discontinued' if x == 'Discontinued item' else x)   
-            # persist df name with that of defined in ssms          
+            # persist df name with that of defined in ssms   
             df.columns = tableCols
+            df = df.dropna(subset = ['sku'])    
             self.myDf = df
             
             batch_size = 500
@@ -195,9 +200,10 @@ def monthly_promotion_brochure_job():
         # Define file management related fields
         folderPath = "sku promotion"
         files = ['Promotion Data.xlsx', 'Ocean_Air in Transit List.xlsx']
-        sku_baseCols = ['sku','category','promo_reason','descrip','moq','socal', 'ofs','free_sku','feb_sales','inv_quantity','inv_level', 'photo_url', 'sys_dt']
+        sku_baseCols = ['sku','color','category','promo_reason','descrip','moq','socal', 'ofs','free_sku','feb_sales','inv_quantity','inv_level', 'photo_url', 'sys_dt']
         sku_hstCols = ['promo_dt','promo_cat','sku','sys_dt']
         oceanAirInvCols = [
+            "inv_eval_dt",
             "co_cd",
             "inv_level",
             "sku",
@@ -253,8 +259,8 @@ def monthly_promotion_brochure_job():
            
 # Test Section 
 if __name__ == "__main__":
-    # # exec once
-    # monthly_promotion_brochure_job()
+    # Test Once
+    monthly_promotion_brochure_job()
     
     # exec this job on 15th at 12:30 am
     schedule.every().day.at("00:30").do(lambda: monthly_promotion_brochure_job() if datetime.now().day == 15 else None)
