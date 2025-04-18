@@ -143,6 +143,16 @@ class AzureDBWriter():
     def oceanAir_Inv_preprocess(self):
         # parse from object to date
         inv_eval_dt = pd.to_datetime(self.myDf.columns[3], format = 'mixed').date()
+        engine = create_engine(self.DB_CONN)
+        # dedup logic below 
+        query = "SELECT distinct inv_eval_dt FROM landing.googleDrive_ocean_air_inv_fct;"
+        trg_df = pd.read_sql(query, engine)
+        if trg_df.shape[0] != 0:     # db table is not empty  
+            trg_dt = pd.read_sql(query, engine).inv_eval_dt.unique().tolist()
+            src_dt = self.myDf.inv_eval_dt.unique().tolist()
+            if bool(set(trg_dt) & set(src_dt)):         # duplicate found
+                self.myDf = None
+                return self
         dt_df = pd.DataFrame({"dt": [inv_eval_dt] * self.myDf.shape[0]})
         data = self.myDf.iloc[2:, :len(self.myCols) - 2]
         self.myDf = pd.concat([dt_df, data], axis = 1)
@@ -154,6 +164,9 @@ class AzureDBWriter():
     def flatFile2db (self, schema, table):
         engine = create_engine(self.DB_CONN)
         try:
+            if self.myDf is None:
+                return
+    
             df = self.myDf.copy()
             tableCols = self.myCols
             # append getdate() datetim2 
@@ -260,7 +273,7 @@ def monthly_promotion_brochure_job():
 # Test Section 
 if __name__ == "__main__":
     # Test Once
-    monthly_promotion_brochure_job()
+    # monthly_promotion_brochure_job()
     
     # exec this job on 15th at 12:30 am
     schedule.every().day.at("00:30").do(lambda: monthly_promotion_brochure_job() if datetime.now().day == 15 else None)
