@@ -210,6 +210,8 @@ class AzureDBWriter():
         # dedup logic below 
         query = "SELECT distinct inv_eval_dt FROM landing.googleDrive_ocean_air_inv_fct;"
         trg_df = pd.read_sql(query, engine)
+        engine.dispose()
+
         if trg_df.shape[0] != 0:     # db table is not empty  
             trg_dt = pd.read_sql(query, engine).inv_eval_dt.unique().tolist()
             src_dt = self.myDf.inv_eval_dt.unique().tolist()
@@ -232,6 +234,8 @@ class AzureDBWriter():
         # Query PK out of the Azure db
         query = "SELECT distinct bill_num, sys_dt, sku FROM landing.erp_items_sold_history;"
         trg_df = pd.read_sql(query, engine)
+        engine.dispose()
+
         if trg_df.shape[0] != 0:     # db table is not empty  
             trg_df["pk"] = trg_df.bill_num.astype(str) + '@' + trg_df.sys_dt.astype(str) + '@' + trg_df.sku.astype(str)
             src_df = self.myDf.copy()
@@ -240,32 +244,33 @@ class AzureDBWriter():
             src_df = src_df[~src_df.pk.isin(trg_df.pk)]
             src_df = src_df.drop(subset=['pk'], axis = 1)
             self.myDf = src_df
-            print(f"[DEBUG] netsuite_items_sold_hst_preprocess (Dedup) CLEANs df of shape {self.myDf.shape}\n")
+            print(f"[DEBUG] netsuite_items_sold_hst_preprocess (Memory Dedup) CLEANs df of shape {self.myDf.shape}\n")
             return 
-        print(f"[DEBUG] netsuite_items_sold_hst_preprocess (Empty table) CLEANs df of shape {self.myDf.shape}\n")
+        print(f"[DEBUG] netsuite_items_sold_hst_preprocess (Azure empty) CLEANs df of shape {self.myDf.shape}\n")
         
     # commit flatFile 2 azure db 
     def flatFile2db (self, schema, table):
+        print(f"flatFile2db func was called with data of shape {self.myDf.shape}\n")
         engine = create_engine(self.DB_CONN)
         try:
-            if self.myDf.shape[0]:          # empty dataframe --> No db load
+            if self.myDf.shape[0] == 0:          # empty dataframe --> No db load
                 return
     
             df = self.myDf.copy()
             tableCols = self.myCols
             # append getdate() datetim2 
-            df['sys_dt'] = pd.to_datetime('now')
+            df['cur_ts'] = pd.to_datetime('now')
 
             '''Below section for data cleaning prior to db load'''
             if "promo dt" in df.columns:
                 df["promo dt"] = pd.to_datetime(df["promo dt"],format="mixed",errors='coerce') 
             # handle manual input err
-            elif "Promotion Reason" in df.columns:
+            if "Promotion Reason" in df.columns:
                 df["Promotion Reason"] = df["Promotion Reason"].apply(lambda x: 'Discontinued' if x == 'Disontinued' else x)
-            elif "promo category" in df.columns:
+            if "promo category" in df.columns:
                 df["promo category"] = df["promo category"].apply(lambda x: 'Discontinued' if x == 'Discontinued item' else x)   
             # drop Nan in promo base xlsx 
-            elif 'sku' in df.columns:
+            if 'sku' in df.columns:
                 df = df.dropna(subset = ['sku'])
 
             # persist df name with that of defined in ssms   
@@ -324,32 +329,33 @@ def monthly_promotion_brochure_job():
             "sys_dt"
         ]
         
-        # load potential sku from OneDrive first
+        # load potential sku base first
         sku_base_df = oneDriveReader.read_excel_from_onedrive(
             "sku promotion",
             files[0],
             sheet_name='potential_skus'
         )
+        sku_base_db = AzureDBWriter(sku_base_df,sku_baseCols)
+        sku_base_db.flatFile2db('landing', 'oneDrive_promo_sku_base')
+
+        # load hst sku df second
         hst_sku_df = oneDriveReader.read_excel_from_onedrive(
             "sku promotion",
             files[0],
             sheet_name='past sku promo'
         )
+        hst_sku_db = AzureDBWriter(hst_sku_df,sku_hstCols)
+        hst_sku_db.flatFile2db('landing', 'oneDrive_hst_promo_sku')
+
         oceanAirInv_df = oneDriveReader.read_excel_from_onedrive(
             "sku promotion",
             files[1],
             sheet_name='Friday Inventory TGEN'
         )
-        
-        # load 2 respective tables
-        sku_base_db = AzureDBWriter(sku_base_df,sku_baseCols)
-        sku_base_db.flatFile2db('landing', 'oneDrive_promo_sku_base')
-        hst_sku_db = AzureDBWriter(hst_sku_df,sku_hstCols)
-        hst_sku_db.flatFile2db('landing', 'oneDrive_hst_promo_sku')
-        
         oceanAirInv_db = AzureDBWriter(oceanAirInv_df,oceanAirInvCols)
         oceanAirInv_db.oceanAir_Inv_preprocess()
         oceanAirInv_db.flatFile2db('landing', 'googleDrive_ocean_air_inv_fct')
+
         print(f">>>>>>>>>>>>>>>>>>>> monthly_promotion_brochure_auto_job() executed at {datetime.now()} <<<<<<<<<<<<<<<<<<<<<<<<\n")
         
     except Exception as e:
@@ -400,6 +406,7 @@ if __name__ == "__main__":
 
     # exec this job on 15th at 12:30 am
     schedule.every().day.at("00:30").do(lambda: monthly_promotion_brochure_job() if datetime.now().day == 15 else None)
+    schedule.every().day.at("00:30").do(lambda: monthly_netsuite_erp_job() if datetime.now().day == 15 else None)
 
     print("========================== Azure DB Cron Agent Started (Dev) ================================")
     while True:
