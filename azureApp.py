@@ -1,7 +1,11 @@
 '''
-Below Script requires Application Permissions (API permission) --> Run as background service without signed-in user
+Below Script 
+a) requires Application Permissions (API permission) --> Run as background service without signed-in user
+b) configure the oneDrive with approprite file management
+c) intend to be deployed over Azure Function App 
 
-Read directly from Andrew Chen's OneDrive Shared Folder for different projects
+All configuration vars could be found from: https://portal.azure.com/?quickstart=true#home
+
 '''
 import os
 import msal
@@ -16,6 +20,7 @@ import schedule
 import time 
 from datetime import datetime
 from IPython.display import display
+import pytz
 
 # OneDrive class for all oneDrive functionalities
 class OneDriveFlatFileReader:
@@ -86,9 +91,9 @@ class OneDriveFlatFileReader:
                     res = requests.get(FileURL, headers = headers, timeout= 30)
                     fileItems = res.json().get('value', [])
                     
-                    for item in fileItems:
-                        if item['name'] == fileName:
-                            return item['@microsoft.graph.downloadUrl']
+                    for file in fileItems:
+                        if file['name'] == fileName:
+                            return file['@microsoft.graph.downloadUrl']
             print(f"Given {fileName} not found in {folderName} folder !")         
             return None
 
@@ -97,23 +102,30 @@ class OneDriveFlatFileReader:
             return None
     
     # read dataframe from ms download link        
-    def __url2df(self, download_url, access_token, sheet_name=None):
+    def __url2df(self, download_url, access_token, sheet_name=None, mode = 'xlsx'):
         headers = {
             "Authorization": f"Bearer {access_token}"
         }
         
         try:
             res = requests.get(download_url, headers= headers, timeout=30)
-            print(f"[DEBUG] Response length: {len(res.content)} bytes")
-            excelData = BytesIO(res.content)
-                        
-            df = pd.read_excel(
-                excelData,
-                sheet_name=sheet_name,
-                engine='openpyxl'
-            )
-            print(f"[DEBUG] DataFrame created with shape: {df.shape}")
-            return df
+            BinaryData = BytesIO(res.content)
+            if mode == 'xlsx':            
+                df = pd.read_excel(
+                    BinaryData,
+                    sheet_name=sheet_name,
+                    engine='openpyxl'
+                )
+                print(f"[DEBUG] __url2df GETS df of shape {df.shape}")
+                return df
+            elif mode == 'csv':
+                df = pd.read_csv(
+                    BinaryData
+                )
+                print(f"[DEBUG] __url2df GETS df of shape {df.shape}")
+                return df 
+            else: 
+                return None
         except requests.exceptions.RequestException as e:
             raise Exception(f"File download failed: {str(e)}")
         except Exception as e:
@@ -125,7 +137,57 @@ class OneDriveFlatFileReader:
             access_token = self.__get_access_token()
             drive_id = self.__get_drive_id(access_token)
             download_url = self.__get_fileDownload_url(access_token,drive_id,folderName,fileName)
-            return self.__url2df(download_url, access_token, sheet_name)
+            return self.__url2df(download_url, access_token, sheet_name, mode='xlsx')
+
+        except Exception as e:
+            raise Exception(f"{str(e)}")
+    
+    # Given a folderName, grab a list of file donwload url based on timestamp
+    def __get_fileDownload_urls_on_ts (self, access_token, driver_id, folderName):
+        oneDriveBaseURL = f"{self.base_graph_url}/drives/{driver_id}"
+        FolderURL = f"{oneDriveBaseURL}/root/children"
+        headers = {"Authorization": f"Bearer {access_token}"}
+
+        # convert ts to UTC 
+        local_ts = datetime.now(pytz.UTC)
+        local_year, local_month = local_ts.year, local_ts.month
+        
+        try:
+            res = requests.get(FolderURL, headers= headers, timeout= 30)
+            items = res.json().get('value', [])
+            folderId = None
+            monthly_downloadFileUrl = []                # A list of donwload url that were modified this month
+            
+            # Iterate over folder items
+            for item in items:
+                if item['name'] == folderName:          # return specified folder id
+                    folderId = item["id"]
+                    FileURL = f"{oneDriveBaseURL}/items/{folderId}/children"
+                    res = requests.get(FileURL, headers = headers, timeout= 30)
+                    fileItems = res.json().get('value', []) 
+                    
+                    # Iterate over files
+                    for file in fileItems:
+                        last_modified_ts = datetime.strptime(file['lastModifiedDateTime'], "%Y-%m-%dT%H:%M:%SZ")
+                        last_modified_y, last_modified_m = last_modified_ts.year, last_modified_ts.month
+                        # matching year and month 
+                        if local_year == last_modified_y and local_month == last_modified_m:
+                            print(f"[DEBUG] __get_fileDownload_urls_on_ts GETS \'{file['name']}\'\n")
+                            monthly_downloadFileUrl.append(file["@microsoft.graph.downloadUrl"])
+                        
+            return monthly_downloadFileUrl
+
+        except requests.exceptions.RequestException as e:
+            print(f"Error searching for folder/file: {str(e)}")
+            return None
+
+    def read_current_month_csvs_from_onedrive(self, folderName):
+        try:
+            access_token = self.__get_access_token()
+            drive_id = self.__get_drive_id(access_token)
+            download_urls = self.__get_fileDownload_urls_on_ts(access_token,drive_id,folderName)
+            dfs = [self.__url2df(url, access_token, mode='csv') for url in download_urls]
+            return dfs
 
         except Exception as e:
             raise Exception(f"{str(e)}")
@@ -138,12 +200,13 @@ class AzureDBWriter():
         self.myDf = df 
         self.myCols = tableCols
         
-    # OceanAir Inventory google xlsx sheet preprocessing (inplace operation)
-    # Skip the first 3 rows and only read in len(tableCols) -1 cols
+    # Preprocess oceanAir Inventory in Python Memory
+    # Dedup based on --> inv_eval_dt
     def oceanAir_Inv_preprocess(self):
         # parse from object to date
         inv_eval_dt = pd.to_datetime(self.myDf.columns[3], format = 'mixed').date()
         engine = create_engine(self.DB_CONN)
+
         # dedup logic below 
         query = "SELECT distinct inv_eval_dt FROM landing.googleDrive_ocean_air_inv_fct;"
         trg_df = pd.read_sql(query, engine)
@@ -151,20 +214,37 @@ class AzureDBWriter():
             trg_dt = pd.read_sql(query, engine).inv_eval_dt.unique().tolist()
             src_dt = self.myDf.inv_eval_dt.unique().tolist()
             if bool(set(trg_dt) & set(src_dt)):         # duplicate found
-                self.myDf = None
-                return self
+                self.myDf = pd.DataFrame()
+                return 
+
+        # pandas manipulation for time reconciliation 
         dt_df = pd.DataFrame({"dt": [inv_eval_dt] * self.myDf.shape[0]})
         data = self.myDf.iloc[2:, :len(self.myCols) - 2]
         self.myDf = pd.concat([dt_df, data], axis = 1)
         numeric_cols = self.myDf.columns[6:-1]
         self.myDf[numeric_cols] = self.myDf[numeric_cols].astype('Int64')
-        return self
+
+    # Preprocess NetSuite csv files in Python Memory 
+    # Dedup based on (bill_num, sys_dt, sku)
+    def netsuite_items_sold_hst_preprocess(self):
+        engine = create_engine(self.DB_CONN)
+
+        # Query PK out of the Azure db
+        query = "SELECT distinct bill_num, sys_dt, sku FROM landing.erp_items_sold_history;"
+        trg_df = pd.read_sql(query, engine)
+        if trg_df.shape[0] != 0:     # db table is not empty  
+            trg_df["pk"] = trg_df.bill_num.astype(str) + '@' + trg_df.sys_dt.astype(str) + '@' + trg_df.sku.astype(str)
+            src_df = self.myDf.copy()
+            src_df["pk"] = src_df.bill_num.astype(str) + '@' + src_df.sys_dt.astype(str) + '@' + src_df.sku.astype(str)
+            # Remove duplicate from src_df that exists in trg_df
+            src_df = src_df[~src_df.pk.isin(trg_df.pk)]
+            self.myDf = src_df
         
     # commit flatFile 2 azure db 
     def flatFile2db (self, schema, table):
         engine = create_engine(self.DB_CONN)
         try:
-            if self.myDf is None:
+            if self.myDf.shape[0]:          # empty dataframe --> No db load
                 return
     
             df = self.myDf.copy()
@@ -180,6 +260,7 @@ class AzureDBWriter():
                 df["Promotion Reason"] = df["Promotion Reason"].apply(lambda x: 'Discontinued' if x == 'Disontinued' else x)
             elif "promo category" in df.columns:
                 df["promo category"] = df["promo category"].apply(lambda x: 'Discontinued' if x == 'Discontinued item' else x)   
+
             # persist df name with that of defined in ssms   
             df.columns = tableCols
             df = df.dropna(subset = ['sku'])    
@@ -204,14 +285,13 @@ class AzureDBWriter():
         finally:
             engine.dispose()
 
-# Define a monthly scheduler that run the cron procedures at 12 AM on 15th of each month
+# Define a monthly promotion sku job (run on 12:30 AM on 15th of each month)
 def monthly_promotion_brochure_job():
     try:
         # create an instance to read from andrew.chen@enerlites.com
         oneDriveReader = OneDriveFlatFileReader("andrew.chen@enerlites.com")
         
         # Define file management related fields
-        folderPath = "sku promotion"
         files = ['Promotion Data.xlsx', 'Ocean_Air in Transit List.xlsx']
         sku_baseCols = ['sku','color','category','promo_reason','descrip','moq','socal', 'ofs','free_sku','feb_sales','inv_quantity','inv_level', 'photo_url', 'sys_dt']
         sku_hstCols = ['promo_dt','promo_cat','sku','sys_dt']
@@ -239,17 +319,17 @@ def monthly_promotion_brochure_job():
         
         # load potential sku from OneDrive first
         sku_base_df = oneDriveReader.read_excel_from_onedrive(
-            folderPath,
+            "sku promotion",
             files[0],
             sheet_name='potential_skus'
         )
         hst_sku_df = oneDriveReader.read_excel_from_onedrive(
-            folderPath,
+            "sku promotion",
             files[0],
             sheet_name='past sku promo'
         )
         oceanAirInv_df = oneDriveReader.read_excel_from_onedrive(
-            folderPath,
+            "sku promotion",
             files[1],
             sheet_name='Friday Inventory TGEN'
         )
@@ -263,18 +343,54 @@ def monthly_promotion_brochure_job():
         oceanAirInv_db = AzureDBWriter(oceanAirInv_df,oceanAirInvCols)
         oceanAirInv_db.oceanAir_Inv_preprocess()
         oceanAirInv_db.flatFile2db('landing', 'googleDrive_ocean_air_inv_fct')
-        print(f">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
-        print(f"monthly_promotion_brochure_auto_job() executed at {datetime.now()} !\n")
+        print(f">>>>>>>>>>>>>>>>>>>>>>> monthly_promotion_brochure_auto_job() executed at {datetime.now()} <<<<<<<<<<<<<<<<<<<<<<<<<<\n")
         
     except Exception as e:
         print(f"{str(e)}")    
+
+# Define monthly netsuite ERP csv to db (ONLY accept .csv file over OneDrive)
+def monthly_netsuite_erp_job():
+    try:
+        # init an oneDrive account
+        oneDriveReader = OneDriveFlatFileReader("andrew.chen@enerlites.com")
+        ns_erp_dfs = oneDriveReader.read_current_month_csvs_from_onedrive("NetSuite ERP") 
+
+        # define ddl fields
+        erp_items_sold_history_cols = [
+            "customer",
+            "bill_num",
+            "quote_num",
+            "sys_dt",
+            "sku",
+            "quantity",
+            "amt",
+            "price_model",
+            "prod_cd",
+            "sku_cat",
+            "state_cd",
+            "proj_type",
+            "onboard_dt",
+            "cust_cat",
+            "discount",
+            "data_dt"
+        ]
+
+        # for each netsuite erp df --> call preprocess --> write2db
+        for ns_df in ns_erp_dfs:
+            nsWriter = AzureDBWriter(ns_df, erp_items_sold_history_cols)
+            nsWriter.netsuite_items_sold_hst_preprocess()
+            nsWriter.flatFile2db('landing','erp_items_sold_history')
+
+    except Exception as e:
+        print(f"{str(e)}")
         
            
 # Test Section 
 if __name__ == "__main__":
     # Test Once
     # monthly_promotion_brochure_job()
-    
+    monthly_netsuite_erp_job()
+
     # exec this job on 15th at 12:30 am
     schedule.every().day.at("00:30").do(lambda: monthly_promotion_brochure_job() if datetime.now().day == 15 else None)
 
