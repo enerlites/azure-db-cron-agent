@@ -116,13 +116,13 @@ class OneDriveFlatFileReader:
                     sheet_name=sheet_name,
                     engine='openpyxl'
                 )
-                print(f"[DEBUG] __url2df GETS df of shape {df.shape}")
+                print(f"[DEBUG] __url2df GETS df of shape {df.shape}\n")
                 return df
             elif mode == 'csv':
                 df = pd.read_csv(
                     BinaryData
                 )
-                print(f"[DEBUG] __url2df GETS df of shape {df.shape}")
+                print(f"[DEBUG] __url2df GETS df of shape {df.shape}\n")
                 return df 
             else: 
                 return None
@@ -238,7 +238,11 @@ class AzureDBWriter():
             src_df["pk"] = src_df.bill_num.astype(str) + '@' + src_df.sys_dt.astype(str) + '@' + src_df.sku.astype(str)
             # Remove duplicate from src_df that exists in trg_df
             src_df = src_df[~src_df.pk.isin(trg_df.pk)]
+            src_df = src_df.drop(subset=['pk'], axis = 1)
             self.myDf = src_df
+            print(f"[DEBUG] netsuite_items_sold_hst_preprocess (Dedup) CLEANs df of shape {self.myDf.shape}\n")
+            return 
+        print(f"[DEBUG] netsuite_items_sold_hst_preprocess (Empty table) CLEANs df of shape {self.myDf.shape}\n")
         
     # commit flatFile 2 azure db 
     def flatFile2db (self, schema, table):
@@ -260,11 +264,14 @@ class AzureDBWriter():
                 df["Promotion Reason"] = df["Promotion Reason"].apply(lambda x: 'Discontinued' if x == 'Disontinued' else x)
             elif "promo category" in df.columns:
                 df["promo category"] = df["promo category"].apply(lambda x: 'Discontinued' if x == 'Discontinued item' else x)   
+            # drop Nan in promo base xlsx 
+            elif 'sku' in df.columns:
+                df = df.dropna(subset = ['sku'])
 
             # persist df name with that of defined in ssms   
             df.columns = tableCols
-            df = df.dropna(subset = ['sku'])    
             self.myDf = df
+            print(f"[DEBUG] flatFile2db GETs df of shape {self.myDf.shape}\n")
             
             batch_size = 500
             for i in range(0, len(df), batch_size):
@@ -343,7 +350,7 @@ def monthly_promotion_brochure_job():
         oceanAirInv_db = AzureDBWriter(oceanAirInv_df,oceanAirInvCols)
         oceanAirInv_db.oceanAir_Inv_preprocess()
         oceanAirInv_db.flatFile2db('landing', 'googleDrive_ocean_air_inv_fct')
-        print(f">>>>>>>>>>>>>>>>>>>>>>> monthly_promotion_brochure_auto_job() executed at {datetime.now()} <<<<<<<<<<<<<<<<<<<<<<<<<<\n")
+        print(f">>>>>>>>>>>>>>>>>>>> monthly_promotion_brochure_auto_job() executed at {datetime.now()} <<<<<<<<<<<<<<<<<<<<<<<<\n")
         
     except Exception as e:
         print(f"{str(e)}")    
@@ -394,7 +401,7 @@ if __name__ == "__main__":
     # exec this job on 15th at 12:30 am
     schedule.every().day.at("00:30").do(lambda: monthly_promotion_brochure_job() if datetime.now().day == 15 else None)
 
-    print("========================== Executing Monthly SKU Promotion Task ================================")
+    print("========================== Azure DB Cron Agent Started (Dev) ================================")
     while True:
         schedule.run_pending()
         time.sleep(60)  # wait for each 1 minute
