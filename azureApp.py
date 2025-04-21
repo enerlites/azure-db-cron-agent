@@ -228,6 +228,9 @@ class AzureDBWriter():
     
     def __items_sold_hst_clean(self):
         df = self.myDf.copy()
+        # drop bad records from netsuite
+        # (sku, bill_num, sys_dt) should never be null
+        df = df.dropna(subset=['sku','bill_num','sys_dt'])
 
         # Transform records pulled from ERP
         df.sys_dt = df.sys_dt.apply(lambda x: x.replace(" am", "").replace(" pm", "") if isinstance(x, str) else x)
