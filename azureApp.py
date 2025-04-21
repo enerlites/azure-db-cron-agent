@@ -120,7 +120,7 @@ class OneDriveFlatFileReader:
                 return df
             elif mode == 'csv':
                 df = pd.read_csv(
-                    BinaryData
+                    BinaryData, low_memory= False
                 )
                 print(f"[DEBUG] __url2df GETS df of shape {df.shape}\n")
                 return df 
@@ -225,24 +225,80 @@ class AzureDBWriter():
         self.myDf = pd.concat([dt_df, data], axis = 1)
         numeric_cols = self.myDf.columns[6:-1]
         self.myDf[numeric_cols] = self.myDf[numeric_cols].astype('Int64')
+    
+    def __items_sold_hst_clean(self):
+        df = self.myDf.copy()
+
+        # Transform records pulled from ERP
+        df.sys_dt = df.sys_dt.apply(lambda x: x.replace(" am", "").replace(" pm", "") if isinstance(x, str) else x)
+        df.onboard_dt = df.onboard_dt.apply(lambda x: x.replace(" am", "").replace(" pm", "") if isinstance(x,str) else x)
+        df.quote_num = df.quote_num.apply(lambda x: x.replace("Sales Order #", "") if isinstance(x, str) else x)
+        df["sys_dt"] = pd.to_datetime(df['sys_dt'], format='%m/%d/%Y %H:%M')
+        df["onboard_dt"] = pd.to_datetime(df['onboard_dt'], format='%m/%d/%Y %H:%M')
+
+        # Pandas treat col with mixed NaN and Object type as of Object type
+        # must check the value is not float NaN 
+        df["state_cd"] = df.state_cd.apply(lambda x: 
+                                           "NY" if isinstance(x, str) and x.lower().startswith("n.y.") 
+                                           else "FL" if isinstance(x, str) and x.lower().startswith("fl")
+                                           else "CA" if isinstance(x, str) and x.lower().startswith("ca")
+                                           else x
+                                           )
+        df["discount"] = df.discount.fillna(0.0).abs()
+        df["sku"] = df.sku.apply(lambda s: s[0].lower() + s[1:] if "Combo" in s else s)
+        # Group sku_cat into reliable Category in home electronic manufacturer
+        df["sku_cat"] = df.sku_cat.apply(lambda s: 
+                                            'Electrical Device' if s in ['Wiring Devices', 'GFCI', 'NEMA', 'Combination Devices', 'USB']
+                                            else 'Smart Home' if s in ['Automation', 'Room Control', 'EV', 'Data-Com Devices']
+                                            else 'Switch' if s in ['Switches', 'Dimmers', 'Fan Speed Control']
+                                            else 'Sensors' if s in ['Sensors', 'In Wall Sensors', 'Humidity Sensors']
+                                            else 'Energy Mangement' if s in ['Plug Load', 'Timers']
+                                            else 'Specialty Accessories' if s in ['Locking Devices', 'Weatherproof Covers', 'Floor Box', 'Wall Plates', 'RV']
+                                            else 'Other' if isinstance(s, float)
+                                            else 'Other'
+                                        )
+
+        # Aggregate by (bill_num, sys_dt, sku) --> for dedup logic
+        groupCols = ['bill_num', 'sys_dt', 'sku']
+        dedup_df = df.groupby(by=groupCols, as_index = False).agg(
+            quantity=("quantity", "sum"),
+            amt=("amt", "sum")
+        )
+
+        # Given that netsuite contain duplicates given (bill_num, sys_dt, sku)
+        new_df = pd.merge(dedup_df, df, on = groupCols, how="inner")\
+                        .drop(columns=["quantity_y", "amt_y"], axis = 1)\
+                        .rename(columns= {"quantity_x": "quantity", "amt_x": "amt"}).drop_duplicates(subset=groupCols)
+        # display(new_df.head(5))
+        new_df = new_df[["customer","bill_num", "quote_num", "sys_dt"
+                        , "sku", "quantity", "amt", "price_model", "prod_cd"
+                        , "sku_cat", "state_cd", "proj_type", "onboard_dt", "cust_cat", "discount"]]
+        
+        # Eliminate bad transaction records
+        new_df = new_df[new_df.quantity != 0]
+        print(f"[DEBUG] __items_sold_hst_clean PROCESSED df\n{df.shape}\n")
+
+        self.myDf = new_df
 
     # Preprocess NetSuite csv files in Python Memory 
     # Dedup based on (bill_num, sys_dt, sku)
     def netsuite_items_sold_hst_preprocess(self):
-        engine = create_engine(self.DB_CONN)
+        # Do the clean and tranformation first
+        self.__items_sold_hst_clean()
+        engine = create_engine(self.DB_CONN, connect_args={"timeout": 30})
 
         # Query PK out of the Azure db
         query = "SELECT distinct bill_num, sys_dt, sku FROM landing.erp_items_sold_history;"
         trg_df = pd.read_sql(query, engine)
+        src_df = self.myDf.copy()
+        src_df["pk"] = src_df.bill_num.astype(str) + '@' + src_df.sys_dt.astype(str) + '@' + src_df.sku.astype(str)
         engine.dispose()
 
         if trg_df.shape[0] != 0:     # db table is not empty  
             trg_df["pk"] = trg_df.bill_num.astype(str) + '@' + trg_df.sys_dt.astype(str) + '@' + trg_df.sku.astype(str)
-            src_df = self.myDf.copy()
-            src_df["pk"] = src_df.bill_num.astype(str) + '@' + src_df.sys_dt.astype(str) + '@' + src_df.sku.astype(str)
             # Remove duplicate from src_df that exists in trg_df
             src_df = src_df[~src_df.pk.isin(trg_df.pk)]
-            src_df = src_df.drop(subset=['pk'], axis = 1)
+            src_df = src_df.drop(columns=['pk'], axis=1)
             self.myDf = src_df
             print(f"[DEBUG] netsuite_items_sold_hst_preprocess (Memory Dedup) CLEANs df of shape {self.myDf.shape}\n")
             return 
