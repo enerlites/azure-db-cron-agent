@@ -463,7 +463,7 @@ if __name__ == "__main__":
     # monthly_promotion_brochure_job()
     monthly_netsuite_erp_job()
 
-    # exec this job on 15th at 12:30 am
+    # exec 2 jobs on 15th at 12:30 am
     schedule.every().day.at("00:30").do(lambda: monthly_promotion_brochure_job() if datetime.now().day == 15 else None)
     schedule.every().day.at("00:30").do(lambda: monthly_netsuite_erp_job() if datetime.now().day == 15 else None)
 
