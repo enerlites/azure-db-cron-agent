@@ -205,26 +205,26 @@ class AzureDBWriter():
     def oceanAir_Inv_preprocess(self):
         # parse from object to date
         inv_eval_dt = pd.to_datetime(self.myDf.columns[3], format = 'mixed').date()
-        engine = create_engine(self.DB_CONN)
-
-        # dedup logic below 
-        query = "SELECT distinct inv_eval_dt FROM landing.googleDrive_ocean_air_inv_fct;"
-        trg_df = pd.read_sql(query, engine)
-        engine.dispose()
-
-        if trg_df.shape[0] != 0:     # db table is not empty  
-            trg_dt = pd.read_sql(query, engine).inv_eval_dt.unique().tolist()
-            src_dt = self.myDf.inv_eval_dt.unique().tolist()
-            if bool(set(trg_dt) & set(src_dt)):         # duplicate found
-                self.myDf = pd.DataFrame()
-                return 
-
         # pandas manipulation for time reconciliation 
-        dt_df = pd.DataFrame({"dt": [inv_eval_dt] * self.myDf.shape[0]})
+        dt_df = pd.DataFrame({"inv_eval_dt": [inv_eval_dt] * self.myDf.shape[0]})
         data = self.myDf.iloc[2:, :len(self.myCols) - 2]
         self.myDf = pd.concat([dt_df, data], axis = 1)
         numeric_cols = self.myDf.columns[6:-1]
         self.myDf[numeric_cols] = self.myDf[numeric_cols].astype('Int64')
+
+        # Access table from azure db
+        engine = create_engine(self.DB_CONN)
+        query = "SELECT distinct inv_eval_dt FROM landing.googleDrive_ocean_air_inv_fct;"
+        trg_df = pd.read_sql(query, engine)
+        engine.dispose()
+
+        # dedup logic below 
+        if trg_df.shape[0] != 0:     # db table is not empty  
+            trg_dt = trg_df.inv_eval_dt.unique().tolist()
+            src_dt = self.myDf.inv_eval_dt.unique().tolist()
+            if bool(set(trg_dt) & set(src_dt)):         # duplicate found
+                self.myDf = pd.DataFrame()
+                return 
     
     def __items_sold_hst_clean(self):
         df = self.myDf.copy()
@@ -365,7 +365,25 @@ def monthly_promotion_brochure_job():
         # Define file management related fields
         files = ['Promotion Data.xlsx', 'Ocean_Air in Transit List.xlsx']
         sku_baseCols = ['sku','color','category','promo_reason','descrip','moq','socal', 'ofs','free_sku','feb_sales','inv_quantity','inv_level', 'photo_url', 'sys_dt']
-        sku_hstCols = ['promo_dt','promo_cat','sku','sys_dt']
+        sku_hstCols = [
+            "month_st",
+            "month_ed",
+            "sku",
+            "promo_reason",
+            "category",
+            "descrip",
+            "color",
+            "moq",
+            "socal",
+            "ofs",
+            "free_sku",
+            "Qty On Hand (monthly)",
+            "Qty sold (last 3 month)",
+            "Months To Sell",
+            "Actual Monthly Qty Sold (Netsuite)",
+            "photo_url",
+            "sys_dt"
+        ]
         oceanAirInvCols = [
             "inv_eval_dt",
             "co_cd",
@@ -460,7 +478,7 @@ def monthly_netsuite_erp_job():
 # Test Section 
 if __name__ == "__main__":
     # Test Once
-    # monthly_promotion_brochure_job()
+    monthly_promotion_brochure_job()
     monthly_netsuite_erp_job()
 
     # exec 2 jobs on 15th at 12:30 am
