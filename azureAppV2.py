@@ -343,25 +343,28 @@ class AzureDBWriter():
 
         if self.myDf.empty:       # empty in memory dataframe 
             return 
-        # Pk fields isn't nullable
+        # Clean the primary key columns (not nullable + no leading trailing whitespace)
         self.myDf = self.myDf.dropna(subset=PK_COLS)
+        for PK in PK_COLS:
+            self.myDf.loc[:,PK] = self.myDf[PK].apply(lambda x: x.strip() if isinstance(x,str) else x)
 
         # pandas normalization and standardization 
-        self.myDf["comp_sku"] = self.myDf.comp_sku.apply(
+        self.myDf.loc[:,"comp_sku"] = self.myDf.comp_sku.apply(
                 lambda x: re.search(r'(?<=:)\s*(.*)', x).group(1)
                 if isinstance(x, str) and ':' in x else x
             )
-        self.myDf["state_cd"] = self.myDf.state_cd.apply(
+        self.myDf.loc[:,"state_cd"] = self.myDf.state_cd.apply(
                 lambda x: "FL" if x == "Florida"
                           else "OR" if x == "Oregon"
                           else "UT" if x == "Utah"
                           else "CR" if x == "Costa Rica"
                           else x.upper()
             )
-        self.myDf["release_dt"] = pd.to_datetime(self.myDf.release_dt, format = "mixed", errors="coerce").dt.date
-        self.myDf["mnf"] = self.myDf.mnf.apply(lambda x: x.capitalize() if isinstance(x, str) else x)
-        self.myDf["distr_typ"] = self.myDf.distr_typ.str.capitalize()
-        self.myDf["distr"] = self.myDf.distr.str.capitalize()
+        self.myDf.loc[:,"release_dt"] = pd.to_datetime(self.myDf.release_dt, format = "mixed", errors="coerce")
+        self.myDf.loc[:,"mnf"] = self.myDf.mnf.apply(lambda x: x.capitalize() if isinstance(x, str) else x)
+        self.myDf.loc[:,"distr_typ"] = self.myDf.distr_typ.str.capitalize()
+        self.myDf.loc[:,"distr"] = self.myDf.distr\
+            .apply(lambda mystr: ' '.join([word.capitalize() for word in mystr.split(' ')]) if isinstance(mystr, str) else mystr)
 
         # dedup pandas dataframe
         self.myDf = self.myDf.drop_duplicates(subset = PK_COLS, keep = 'last')
@@ -371,18 +374,30 @@ class AzureDBWriter():
             engine = create_engine(self.DB_CONN, connect_args={"timeout": 30})
             query = "SELECT distinct release_dt,state_cd,en_sku,comp_sku,distr_typ FROM landing.en_comp_sku_fct;"
             trg_df = pd.read_sql(query, engine)
+            trg_df['release_dt'] = pd.to_datetime(trg_df.release_dt)
+            # sub_trg = trg_df.loc[(trg_df.en_sku =='7941') & (trg_df.state_cd == "FL")]
+            # print(f"[DEBUG] comp_agent_web_upsert_preprocess azure target table shape:\n{sub_trg}\n")
+
             src_df = self.myDf.copy()
             leftMergeDf = src_df.merge(trg_df, on = PK_COLS, how = 'left', indicator = True)
             insertionDf = leftMergeDf[leftMergeDf['_merge'] == 'left_only'].drop(columns = ['_merge'], axis = 1)
             self.myDf = insertionDf
-            print(f"[DEBUG] comp_agent_web_upsert_preprocess INSERTION gets df:\n{insertionDf.head(5)}\n")
+            # sub_src = insertionDf[PK_COLS]
+
+            # azureDBHash = trg_df.loc[335,PK_COLS].astype(str).agg('|'.join, axis=1)
+            # pandasHash = insertionDf.loc[33, PK_COLS].astype(str).agg('|'.join, axis=1)
+            # print(f"Shared PK rows for 7941 at FL = {set(azureDBHash).intersection(set(pandasHash))}")
+
+            # print(f"[DEBUG] comp_agent_web_upsert_preprocess INSERTION df:\n{sub_src.head(5)}\n")
+
+            # print(sub_trg.dtypes)
+            # print(sub_src.dtypes)
 
             # Update logic based on duplicate pk
-            updateDf = leftMergeDf[
-                (leftMergeDf["_merge"] == "both")]\
+            updateDf = leftMergeDf[(leftMergeDf["_merge"] == "both")]\
                 .drop(columns = ["_merge"], axis = 1)
             
-            print(f"[DEBUG] comp_agent_web_upsert_preprocess UPDATE gets df:\n{updateDf.head(5)}\n")
+            # print(f"[DEBUG] comp_agent_web_upsert_preprocess UPDATE gets df:\n{updateDf.head(5)}\n")
             
             if updateDf.shape[0] == 0:
                 return 
