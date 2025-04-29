@@ -142,9 +142,9 @@ class OneDriveFlatFileReader:
                     return df 
                 else: 
                     print(f"[DEBUG] __url2df unsupported {mode}")
-                    return None
+                    return pd.DataFrame()
             else:       # download url not available (Not Exists / Time Constraint Not Satisfied)
-                return None
+                return pd.DataFrame()
         except requests.exceptions.RequestException as e:
             raise Exception(f"File download failed: {str(e)}")
         except Exception as e:
@@ -339,14 +339,10 @@ class AzureDBWriter():
     # Preprocess Competitor Agent Web xlsx file --> perform upsert on pandas dataframe and azure db
     # PK ~ (state_cd, en_sku, mnf, distr_typ)
     def comp_agent_web_upsert_preprocess(self):
-        PK_COLS = ['release_dt','state_cd','en_sku','mnf','distr_typ']
+        PK_COLS = ['release_dt','state_cd','en_sku','comp_sku','distr_typ']
 
         if self.myDf.empty:       # empty in memory dataframe 
             return 
-        # Pk fields isn't nullable
-        self.myDf = self.myDf.dropna(subset=PK_COLS)
-        # dedup on pandas df
-        self.myDf = self.myDf.drop_duplicates(subset = PK_COLS, keep = 'last')
         # transform comp_sku field
         self.myDf["comp_sku"] = self.myDf.comp_sku.apply(
                 lambda x: re.search(r'(?<=:)\s*(.*)', x).group(1)
@@ -359,6 +355,11 @@ class AzureDBWriter():
                           else "CR" if x == "Costa Rica"
                           else x
             ).str.upper()
+        
+        # Pk fields isn't nullable
+        self.myDf = self.myDf.dropna(subset=PK_COLS)
+        # dedup on pandas df
+        self.myDf = self.myDf.drop_duplicates(subset = PK_COLS, keep = 'last')
         
         try:
             # Insertion logic based on non-duplicate PK
@@ -381,7 +382,7 @@ class AzureDBWriter():
                     updt_stmt = text("""
                         UPDATE landing.en_comp_sku_fct 
                         SET mnf_stk_price = :mnf_stk_price,
-                            comp_sku = :comp_sku,
+                            mnf = :mnf,
                             quantity = :quantity,
                             mnf_desc = :mnf_desc,
                             rep_name = :rep_name,
@@ -389,7 +390,7 @@ class AzureDBWriter():
                         WHERE release_dt = :release_dt
                             AND state_cd = :state_cd
                             AND en_sku = :en_sku
-                            AND mnf = :mnf
+                            AND comp_sku = :comp_sku
                             AND distr_typ = :distr_typ;
                     """)
                     conn.execute(updt_stmt, {
