@@ -163,8 +163,8 @@ class OneDriveFlatFileReader:
     
     '''
     Grab a list of ms downloadable url within time eval level (4th argument)
-        eg. when time_eval_level = 'month'          --> generate download urls only when files are modified
-                 time_eval_level = 'day'            --> generate download urls only when files are modified
+        eg. when time_eval_level = 'month'          --> generate file download urls only when a file is modified in current month
+                 time_eval_level = 'day'            --> generate file download urls only when a file is modified on current day
     '''
     def __get_multi_files_dw_urls (self, access_token, driver_id, folderName, time_eval_level = None):
         oneDriveBaseURL = f"{self.base_graph_url}/drives/{driver_id}"
@@ -337,13 +337,16 @@ class AzureDBWriter():
 
 
     # Preprocess Competitor Agent Web xlsx file --> perform upsert on pandas dataframe and azure db
-    # PK ~ (state_cd, en_sku, mnf, distr_typ)
+    # PK ~ ('release_dt','state_cd','en_sku','comp_sku','distr_typ')
     def comp_agent_web_upsert_preprocess(self):
         PK_COLS = ['release_dt','state_cd','en_sku','comp_sku','distr_typ']
 
         if self.myDf.empty:       # empty in memory dataframe 
             return 
-        # transform comp_sku field
+        # Pk fields isn't nullable
+        self.myDf = self.myDf.dropna(subset=PK_COLS)
+
+        # pandas normalization and standardization 
         self.myDf["comp_sku"] = self.myDf.comp_sku.apply(
                 lambda x: re.search(r'(?<=:)\s*(.*)', x).group(1)
                 if isinstance(x, str) and ':' in x else x
@@ -353,26 +356,34 @@ class AzureDBWriter():
                           else "OR" if x == "Oregon"
                           else "UT" if x == "Utah"
                           else "CR" if x == "Costa Rica"
-                          else x
-            ).str.upper()
-        
-        # Pk fields isn't nullable
-        self.myDf = self.myDf.dropna(subset=PK_COLS)
-        # dedup on pandas df
+                          else x.upper()
+            )
+        self.myDf["release_dt"] = pd.to_datetime(self.myDf.release_dt, format = "mixed", errors="coerce").dt.date
+        self.myDf["mnf"] = self.myDf.mnf.apply(lambda x: x.capitalize() if isinstance(x, str) else x)
+        self.myDf["distr_typ"] = self.myDf.distr_typ.str.capitalize()
+        self.myDf["distr"] = self.myDf.distr.str.capitalize()
+
+        # dedup pandas dataframe
         self.myDf = self.myDf.drop_duplicates(subset = PK_COLS, keep = 'last')
-        
+
         try:
             # Insertion logic based on non-duplicate PK
             engine = create_engine(self.DB_CONN, connect_args={"timeout": 30})
-            query = "SELECT distinct release_dt,state_cd,en_sku,mnf,distr_typ FROM landing.en_comp_sku_fct;"
+            query = "SELECT distinct release_dt,state_cd,en_sku,comp_sku,distr_typ FROM landing.en_comp_sku_fct;"
             trg_df = pd.read_sql(query, engine)
             src_df = self.myDf.copy()
-            leftMergeDf = src_df.merge(trg_df, how = 'left', indicator = True)
+            leftMergeDf = src_df.merge(trg_df, on = PK_COLS, how = 'left', indicator = True)
             insertionDf = leftMergeDf[leftMergeDf['_merge'] == 'left_only'].drop(columns = ['_merge'], axis = 1)
             self.myDf = insertionDf
+            print(f"[DEBUG] comp_agent_web_upsert_preprocess INSERTION gets df:\n{insertionDf.head(5)}\n")
 
             # Update logic based on duplicate pk
-            updateDf = leftMergeDf[leftMergeDf["_merge"] == "both"].drop(columns = ["_merge"], axis = 1)
+            updateDf = leftMergeDf[
+                (leftMergeDf["_merge"] == "both")]\
+                .drop(columns = ["_merge"], axis = 1)
+            
+            print(f"[DEBUG] comp_agent_web_upsert_preprocess UPDATE gets df:\n{updateDf.head(5)}\n")
+            
             if updateDf.shape[0] == 0:
                 return 
             updateDf["sys_dt"] = pd.to_datetime('now')
