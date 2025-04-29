@@ -22,6 +22,7 @@ import time
 from datetime import datetime
 from IPython.display import display
 import pytz
+import re
 
 # OneDrive class for all oneDrive functionalities
 class OneDriveFlatFileReader:
@@ -340,12 +341,24 @@ class AzureDBWriter():
     def comp_agent_web_upsert_preprocess(self):
         PK_COLS = ['release_dt','state_cd','en_sku','mnf','distr_typ']
 
-        if not self.myDf:       # empty in memory dataframe 
+        if self.myDf.empty:       # empty in memory dataframe 
             return 
         # Pk fields isn't nullable
         self.myDf = self.myDf.dropna(subset=PK_COLS)
         # dedup on pandas df
         self.myDf = self.myDf.drop_duplicates(subset = PK_COLS, keep = 'last')
+        # transform comp_sku field
+        self.myDf["comp_sku"] = self.myDf.comp_sku.apply(
+                lambda x: re.search(r'(?<=:)\s*(.*)', x).group(1)
+                if isinstance(x, str) and ':' in x else x
+            )
+        self.myDf["state_cd"] = self.myDf.state_cd.apply(
+                lambda x: "FL" if x == "Florida"
+                          else "OR" if x == "Oregon"
+                          else "UT" if x == "Utah"
+                          else "CR" if x == "Costa Rica"
+                          else x
+            ).str.upper()
         
         try:
             # Insertion logic based on non-duplicate PK
@@ -401,9 +414,8 @@ class AzureDBWriter():
     def flatFile2db (self, schema, table):
         engine = create_engine(self.DB_CONN)
         try:
-            if not self.myDf:       # abort when None
-                return
-            elif self.myDf.shape[0] == 0:   # abort when empty dataframe
+            # empty df abort load job
+            if self.myDf.empty:
                 return 
     
             df = self.myDf.copy()
