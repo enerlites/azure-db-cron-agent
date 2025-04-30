@@ -360,11 +360,12 @@ class AzureDBWriter():
                           else "CR" if x == "Costa Rica"
                           else x.upper()
             )
-        self.myDf.loc[:,"release_dt"] = pd.to_datetime(self.myDf.release_dt, format = "mixed", errors="coerce")
+        self.myDf.loc[:,"release_dt"] = pd.to_datetime(self.myDf.release_dt, format = "mixed", errors="coerce").dt.date
         self.myDf.loc[:,"mnf"] = self.myDf.mnf.apply(lambda x: x.capitalize() if isinstance(x, str) else x)
         self.myDf.loc[:,"distr_typ"] = self.myDf.distr_typ.str.capitalize()
         self.myDf.loc[:,"distr"] = self.myDf.distr\
             .apply(lambda mystr: ' '.join([word.capitalize() for word in mystr.split(' ')]) if isinstance(mystr, str) else mystr)
+        self.myDf.loc[:,["en_sku", "comp_sku"]] = self.myDf[["en_sku", "comp_sku"]].astype("str")       # remember to cast to str instead of obj type
 
         # dedup pandas dataframe
         self.myDf = self.myDf.drop_duplicates(subset = PK_COLS, keep = 'last')
@@ -374,30 +375,30 @@ class AzureDBWriter():
             engine = create_engine(self.DB_CONN, connect_args={"timeout": 30})
             query = "SELECT distinct release_dt,state_cd,en_sku,comp_sku,distr_typ FROM landing.en_comp_sku_fct;"
             trg_df = pd.read_sql(query, engine)
-            trg_df['release_dt'] = pd.to_datetime(trg_df.release_dt)
-            # sub_trg = trg_df.loc[(trg_df.en_sku =='7941') & (trg_df.state_cd == "FL")]
-            # print(f"[DEBUG] comp_agent_web_upsert_preprocess azure target table shape:\n{sub_trg}\n")
+            trg_df['release_dt'] = pd.to_datetime(trg_df.release_dt, format = "%Y-%m-%d", errors="coerce")
 
             src_df = self.myDf.copy()
+
+            # debug mode below
+            # print(f"[DEBUG] comp_agent_web_upsert_preprocess INSPECT pandas df type:\n{src_df.dtypes}\n{trg_df.dtypes}\n")
+            # subset_src = src_df.loc[(src_df.en_sku == "7941") & (src_df.release_dt == "2020-08-10") & (src_df.state_cd == "FL")]
+            # subset_trg = trg_df.loc[(trg_df.en_sku == "7941") & (trg_df.release_dt == "2020-08-10") & (trg_df.state_cd == "FL")]
+            # print(f"[DEBUG] comp_agent_web_upsert_preprocess\nPandas Memory df:\n{subset_src}\nAzure db df:\n{subset_trg}\n")
+
             leftMergeDf = src_df.merge(trg_df, on = PK_COLS, how = 'left', indicator = True)
             insertionDf = leftMergeDf[leftMergeDf['_merge'] == 'left_only'].drop(columns = ['_merge'], axis = 1)
-            self.myDf = insertionDf
-            # sub_src = insertionDf[PK_COLS]
+            print(f"[DEBUG] comp_agent_web_upsert_preprocess INSERTION GETS {insertionDf.shape}\n")
 
-            # azureDBHash = trg_df.loc[335,PK_COLS].astype(str).agg('|'.join, axis=1)
-            # pandasHash = insertionDf.loc[33, PK_COLS].astype(str).agg('|'.join, axis=1)
-            # print(f"Shared PK rows for 7941 at FL = {set(azureDBHash).intersection(set(pandasHash))}")
-
-            # print(f"[DEBUG] comp_agent_web_upsert_preprocess INSERTION df:\n{sub_src.head(5)}\n")
-
-            # print(sub_trg.dtypes)
-            # print(sub_src.dtypes)
+            if insertionDf.shape[0] == 0:
+                self.myDf = pd.DataFrame()
+            else:
+                self.myDf = insertionDf
 
             # Update logic based on duplicate pk
             updateDf = leftMergeDf[(leftMergeDf["_merge"] == "both")]\
                 .drop(columns = ["_merge"], axis = 1)
             
-            # print(f"[DEBUG] comp_agent_web_upsert_preprocess UPDATE gets df:\n{updateDf.head(5)}\n")
+            print(f"[DEBUG] comp_agent_web_upsert_preprocess UPDATE gets df:\n{updateDf.head(5)}\n")
             
             if updateDf.shape[0] == 0:
                 return 
