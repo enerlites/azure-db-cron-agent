@@ -14,13 +14,15 @@ import pandas as pd
 from io import BytesIO
 from dotenv import load_dotenv
 from urllib.parse import quote
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
 import urllib.parse
 import schedule 
 import time 
 from datetime import datetime
 from IPython.display import display
 import pytz
+import re
 
 # OneDrive class for all oneDrive functionalities
 class OneDriveFlatFileReader:
@@ -72,7 +74,8 @@ class OneDriveFlatFileReader:
             raise Exception(f"Failed to get drive info: {str(e)}")
     
     # Get file id with (access_token, driver_id, folderName)
-    def __get_fileDownload_url(self, access_token, driver_id, folderName, fileName):
+    # 5th argument --> used for time_eval_level 
+    def _get_single_file_dw_url(self, access_token, driver_id, folderName, fileName, time_eval_level = None):
         oneDriveBaseURL = f"{self.base_graph_url}/drives/{driver_id}"
         FolderURL = f"{oneDriveBaseURL}/root/children"
         headers = {"Authorization": f"Bearer {access_token}"}
@@ -81,6 +84,10 @@ class OneDriveFlatFileReader:
             res = requests.get(FolderURL, headers= headers, timeout= 30)
             items = res.json().get('value', [])         # return a list of python dict
             folderId = None
+
+            # convert ts to UTC 
+            local_ts = datetime.now(pytz.UTC)
+            local_year, local_month, local_day = local_ts.year, local_ts.month, local_ts.day
             
             # found foldername first within the oneDrive root dir
             for item in items:
@@ -92,9 +99,17 @@ class OneDriveFlatFileReader:
                     fileItems = res.json().get('value', [])
                     
                     for file in fileItems:
-                        if file['name'] == fileName:
+                        # no time restriction on this file (just read) 
+                        if file['name'] == fileName and not time_eval_level:
                             return file['@microsoft.graph.downloadUrl']
-            print(f"Given {fileName} not found in {folderName} folder !")         
+                        # align file modification ts w.r.t day 
+                        elif file['name'] == fileName and time_eval_level == 'day':
+                            modified_ts = datetime.strptime(file['lastModifiedDateTime'], "%Y-%m-%dT%H:%M:%SZ")
+                            modified_y, modified_m, modified_d = modified_ts.year, modified_ts.month, modified_ts.day
+
+                            if modified_y == local_year and modified_m == local_month and modified_d == local_day:
+                                return file['@microsoft.graph.downloadUrl']
+            print(f"\"{fileName}\" either not exists in \"{folderName}\" folder or not modified ! (Skip db load)\n")         
             return None
 
         except requests.exceptions.RequestException as e:
@@ -108,55 +123,63 @@ class OneDriveFlatFileReader:
         }
         
         try:
-            res = requests.get(download_url, headers= headers, timeout=30)
-            BinaryData = BytesIO(res.content)
-            if mode == 'xlsx':            
-                df = pd.read_excel(
-                    BinaryData,
-                    sheet_name=sheet_name,
-                    engine='openpyxl'
-                )
-                print(f"[DEBUG] __url2df GETS df of shape {df.shape}\n")
-                return df
-            elif mode == 'csv':
-                df = pd.read_csv(
-                    BinaryData, low_memory= False
-                )
-                print(f"[DEBUG] __url2df GETS df of shape {df.shape}\n")
-                return df 
-            else: 
-                return None
+            if download_url:    # obtain valid download url
+                res = requests.get(download_url, headers= headers, timeout=30)
+                BinaryData = BytesIO(res.content)
+                if mode == 'xlsx':            
+                    df = pd.read_excel(
+                        BinaryData,
+                        sheet_name=sheet_name,
+                        engine='openpyxl'
+                    )
+                    print(f"[DEBUG] __url2df (xlsx) GETS {df.shape}\n")
+                    return df
+                elif mode == 'csv':
+                    df = pd.read_csv(
+                        BinaryData, low_memory= False
+                    )
+                    print(f"[DEBUG] __url2df (csv) GETS {df.shape}\n")
+                    return df 
+                else: 
+                    print(f"[DEBUG] __url2df unsupported {mode}")
+                    return pd.DataFrame()
+            else:       # download url not available (Not Exists / Time Constraint Not Satisfied)
+                return pd.DataFrame()
         except requests.exceptions.RequestException as e:
             raise Exception(f"File download failed: {str(e)}")
         except Exception as e:
             raise Exception(f"Excel parsing failed: {str(e)}")
 
-    def read_excel_from_onedrive(self, folderName, fileName, sheet_name=None):
+    def read_excel_from_onedrive(self, folderName, fileName, sheet_name=None, time_eval_level= None):
         # driver function that coordinates all private / public class functions
         try:
             access_token = self.__get_access_token()
             drive_id = self.__get_drive_id(access_token)
-            download_url = self.__get_fileDownload_url(access_token,drive_id,folderName,fileName)
+            download_url = self._get_single_file_dw_url(access_token,drive_id,folderName,fileName, time_eval_level)
             return self.__url2df(download_url, access_token, sheet_name, mode='xlsx')
 
         except Exception as e:
             raise Exception(f"{str(e)}")
     
-    # Given a folderName, grab a list of file donwload url based on timestamp
-    def __get_fileDownload_urls_on_ts (self, access_token, driver_id, folderName):
+    '''
+    Grab a list of ms downloadable url within time eval level (4th argument)
+        eg. when time_eval_level = 'month'          --> generate file download urls only when a file is modified in current month
+                 time_eval_level = 'day'            --> generate file download urls only when a file is modified on current day
+    '''
+    def __get_multi_files_dw_urls (self, access_token, driver_id, folderName, time_eval_level = None):
         oneDriveBaseURL = f"{self.base_graph_url}/drives/{driver_id}"
         FolderURL = f"{oneDriveBaseURL}/root/children"
         headers = {"Authorization": f"Bearer {access_token}"}
 
         # convert ts to UTC 
         local_ts = datetime.now(pytz.UTC)
-        local_year, local_month = local_ts.year, local_ts.month
+        local_year, local_month, local_day = local_ts.year, local_ts.month, local_ts.day
         
         try:
             res = requests.get(FolderURL, headers= headers, timeout= 30)
             items = res.json().get('value', [])
             folderId = None
-            monthly_downloadFileUrl = []                # A list of donwload url that were modified this month
+            dwFileUrls = []                # A list of donwload url that were modified this month
             
             # Iterate over folder items
             for item in items:
@@ -168,24 +191,29 @@ class OneDriveFlatFileReader:
                     
                     # Iterate over files
                     for file in fileItems:
-                        last_modified_ts = datetime.strptime(file['lastModifiedDateTime'], "%Y-%m-%dT%H:%M:%SZ")
-                        last_modified_y, last_modified_m = last_modified_ts.year, last_modified_ts.month
-                        # matching year and month 
-                        if local_year == last_modified_y and local_month == last_modified_m:
-                            print(f"[DEBUG] __get_fileDownload_urls_on_ts GETS \'{file['name']}\'\n")
-                            monthly_downloadFileUrl.append(file["@microsoft.graph.downloadUrl"])
+                        modified_ts = datetime.strptime(file['lastModifiedDateTime'], "%Y-%m-%dT%H:%M:%SZ")
+                        modified_y, modified_m, modified_d = modified_ts.year, modified_ts.month, modified_ts.day
+                        # check monthly basis
+                        if local_year == modified_y and local_month == modified_m and time_eval_level == 'month':
+                            print(f"[DEBUG] __get_multi_files_dw_urls GETS \'{file['name']}\'\n")
+                            dwFileUrls.append(file["@microsoft.graph.downloadUrl"])
                         
-            return monthly_downloadFileUrl
+                        # check daily basis
+                        elif local_year == modified_y and local_month == modified_m and local_day == modified_d and time_eval_level == 'day':
+                            print(f"[DEBUG] __get_multi_files_dw_urls GETS \'{file['name']}\'\n")
+                            dwFileUrls.append(file["@microsoft.graph.downloadUrl"])
+                        
+            return dwFileUrls
 
         except requests.exceptions.RequestException as e:
             print(f"Error searching for folder/file: {str(e)}")
             return None
 
-    def read_current_month_csvs_from_onedrive(self, folderName):
+    def read_csv_from_oneDrive(self, folderName, time_eval_level = 'month'):
         try:
             access_token = self.__get_access_token()
             drive_id = self.__get_drive_id(access_token)
-            download_urls = self.__get_fileDownload_urls_on_ts(access_token,drive_id,folderName)
+            download_urls = self.__get_multi_files_dw_urls(access_token,drive_id,folderName, time_eval_level)
             dfs = [self.__url2df(url, access_token, mode='csv') for url in download_urls]
             return dfs
 
@@ -306,14 +334,114 @@ class AzureDBWriter():
             print(f"[DEBUG] netsuite_items_sold_hst_preprocess (Memory Dedup) CLEANs df of shape {self.myDf.shape}\n")
             return 
         print(f"[DEBUG] netsuite_items_sold_hst_preprocess (Azure empty) CLEANs df of shape {self.myDf.shape}\n")
+
+
+    # Preprocess Competitor Agent Web xlsx file --> perform upsert on pandas dataframe and azure db
+    # PK ~ ('release_dt','state_cd','en_sku','comp_sku','distr_typ')
+    def comp_agent_web_upsert_preprocess(self):
+        PK_COLS = ['release_dt','state_cd','en_sku','comp_sku','distr_typ']
+
+        if self.myDf.empty:       # empty in memory dataframe 
+            return 
+        # Clean the primary key columns (not nullable + no leading trailing whitespace)
+        self.myDf = self.myDf.dropna(subset=PK_COLS)
+        for PK in PK_COLS:
+            self.myDf.loc[:,PK] = self.myDf[PK].apply(lambda x: x.strip() if isinstance(x,str) else x)
+
+        # pandas normalization and standardization 
+        self.myDf.loc[:,"comp_sku"] = self.myDf.comp_sku.apply(
+                lambda x: re.search(r'(?<=:)\s*(.*)', x).group(1)
+                if isinstance(x, str) and ':' in x else x
+            )
+        self.myDf.loc[:,"state_cd"] = self.myDf.state_cd.apply(
+                lambda x: "FL" if x == "Florida"
+                          else "OR" if x == "Oregon"
+                          else "UT" if x == "Utah"
+                          else "CR" if x == "Costa Rica"
+                          else x.upper()
+            )
+        self.myDf.loc[:,"release_dt"] = pd.to_datetime(self.myDf.release_dt, format = "mixed", errors="coerce").dt.date
+        self.myDf.loc[:,"mnf"] = self.myDf.mnf.apply(lambda x: x.capitalize() if isinstance(x, str) else x)
+        self.myDf.loc[:,"distr_typ"] = self.myDf.distr_typ.str.capitalize()
+        self.myDf.loc[:,"distr"] = self.myDf.distr\
+            .apply(lambda mystr: ' '.join([word.capitalize() for word in mystr.split(' ')]) if isinstance(mystr, str) else mystr)
+        self.myDf.loc[:,["en_sku", "comp_sku"]] = self.myDf[["en_sku", "comp_sku"]].astype("str")       # remember to cast to str instead of obj type
+
+        # dedup pandas dataframe
+        self.myDf = self.myDf.drop_duplicates(subset = PK_COLS, keep = 'last')
+
+        try:
+            # Insertion logic based on non-duplicate PK
+            engine = create_engine(self.DB_CONN, connect_args={"timeout": 30})
+            query = "SELECT distinct release_dt,state_cd,en_sku,comp_sku,distr_typ,mnf_stk_price FROM landing.en_comp_sku_fct;"
+            trg_df = pd.read_sql(query, engine)
+            trg_df['release_dt'] = pd.to_datetime(trg_df.release_dt, format = "%Y-%m-%d", errors="coerce")
+
+            src_df = self.myDf.copy()
+            leftMergeDf = src_df.merge(trg_df, on = PK_COLS, how = 'left', indicator = True)
+            insertionDf = leftMergeDf[leftMergeDf['_merge'] == 'left_only'].drop(columns = ['_merge', 'mnf_stk_price_y'], axis = 1)
+            print(f"[DEBUG] comp_agent_web_upsert_preprocess INSERTION GETS {insertionDf.shape}\n")
+
+            if insertionDf.shape[0] == 0:
+                self.myDf = pd.DataFrame()
+            else:
+                self.myDf = insertionDf
+
+            # Update logic based on duplicate pk
+            updateDf = leftMergeDf[
+                                    (leftMergeDf["_merge"] == "both") 
+                                    & (leftMergeDf["mnf_stk_price_x"] != leftMergeDf["mnf_stk_price_y"])
+                                    & ~(pd.isna(leftMergeDf.mnf_stk_price_x))
+                                  ]\
+                .drop(columns = ["_merge"], axis = 1)
+            
+            print(f"[DEBUG] comp_agent_web_upsert_preprocess UPDATE gets df:\n{updateDf.shape}\n")
+            
+            if updateDf.shape[0] == 0:
+                return 
+            updateDf["sys_dt"] = pd.to_datetime('now')
+            with engine.begin() as conn:  # Ensures commit/rollback
+                for _, row in updateDf.iterrows():
+                    # Use parameterized SQL to avoid SQL injection and type issues
+                    updt_stmt = text("""
+                        UPDATE landing.en_comp_sku_fct 
+                        SET mnf_stk_price = :mnf_stk_price,
+                            mnf = :mnf,
+                            quantity = :quantity,
+                            mnf_desc = :mnf_desc,
+                            rep_name = :rep_name,
+                            sys_dt = :sys_dt
+                        WHERE release_dt = :release_dt
+                            AND state_cd = :state_cd
+                            AND en_sku = :en_sku
+                            AND comp_sku = :comp_sku
+                            AND distr_typ = :distr_typ;
+                    """)
+                    conn.execute(updt_stmt, {
+                        'mnf_stk_price': None if pd.isna(row.get('mnf_stk_price')) else row.get('mnf_stk_price'),
+                        'mnf': None if pd.isna(row.get('mnf')) else row.get('mnf'),
+                        'quantity': None if pd.isna(row.get('quantity')) else row.get('quantity'),
+                        'mnf_desc': None if pd.isna(row.get('mnf_desc')) else row.get('mnf_desc'),
+                        'rep_name': None if pd.isna(row.get('rep_name')) else row.get('rep_name'),
+                        'sys_dt': row['sys_dt'],
+                        'release_dt': row['release_dt'],
+                        'state_cd': row['state_cd'],
+                        'en_sku': row['en_sku'],
+                        'comp_sku': row['comp_sku'],
+                        'distr_typ': row['distr_typ']
+                    })
+        except SQLAlchemyError as sqlerr: 
+            print(f"[DEBUG] comp_agent_web_preprocess GETS Azure DB err: {sqlerr}\n")
+        finally:
+            engine.dispose()
         
     # commit flatFile 2 azure db 
     def flatFile2db (self, schema, table):
-        print(f"flatFile2db func was called with data of shape {self.myDf.shape}\n")
         engine = create_engine(self.DB_CONN)
         try:
-            if self.myDf.shape[0] == 0:          # empty dataframe --> No db load
-                return
+            # empty df abort load job
+            if self.myDf.empty:
+                return 
     
             df = self.myDf.copy()
             tableCols = self.myCols
@@ -443,7 +571,7 @@ def monthly_netsuite_erp_job():
     try:
         # init an oneDrive account
         oneDriveReader = OneDriveFlatFileReader("andrew.chen@enerlites.com")
-        ns_erp_dfs = oneDriveReader.read_current_month_csvs_from_onedrive("NetSuite ERP") 
+        ns_erp_dfs = oneDriveReader.read_csv_from_oneDrive("NetSuite ERP", "month") 
 
         # define ddl fields
         erp_items_sold_history_cols = [
@@ -473,17 +601,48 @@ def monthly_netsuite_erp_job():
 
     except Exception as e:
         print(f"{str(e)}")
-        
+
+# Define daily cron job for importing and updating en_comp_sku_fct table in Azure DB 
+def daily_comp_pricing_job():
+    try:
+        oneDriveReader = OneDriveFlatFileReader("andrew.chen@enerlites.com")
+        comp_pricing_df = oneDriveReader.read_excel_from_onedrive("competitor agent web", "en_comp_sku_fct.xlsx", "in", "day")
+
+        # define ddl fields
+        en_comp_sku_fct_cols = [
+            "release_dt",
+            "state_cd",
+            "mnf_stk_price",
+            "en_sku",
+            "comp_sku",
+            "quantity",
+            "mnf",
+            "distr",
+            "mnf_desc",
+            "distr_typ",
+            "rep_name",
+            "sys_dt"
+        ]
+
+        compWriter = AzureDBWriter(comp_pricing_df, en_comp_sku_fct_cols)
+        compWriter.comp_agent_web_upsert_preprocess()
+        compWriter.flatFile2db('landing', 'en_comp_sku_fct')
+
+    except Exception as e:
+        print(f"{str(e)}")
            
 # Test Section 
 if __name__ == "__main__":
     # Test Once
+    daily_comp_pricing_job()
     monthly_promotion_brochure_job()
     monthly_netsuite_erp_job()
 
-    # exec 2 jobs on 15th at 12:30 am
+    # Schedule 2 jobs on 15th of each month at 12:30 am
     schedule.every().day.at("00:30").do(lambda: monthly_promotion_brochure_job() if datetime.now().day == 15 else None)
-    schedule.every().day.at("00:30").do(lambda: monthly_netsuite_erp_job() if datetime.now().day == 15 else None)
+    schedule.every().day.at("01:00").do(lambda: monthly_netsuite_erp_job() if datetime.now().day == 15 else None)
+    # Schedule 1 job on 12:00 AM of each day
+    schedule.every().day.at("00:00").do(daily_comp_pricing_job)
 
     print("========================== Azure DB Cron Agent Started (Dev) ================================")
     while True:
