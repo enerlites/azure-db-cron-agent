@@ -132,7 +132,7 @@ def monthly_netsuite_erp_job():
 def daily_comp_pricing_job():
     try:
         oneDriveReader = OneDriveFlatFileReader("andrew.chen@enerlites.com")
-        comp_pricing_df = oneDriveReader.read_excel_from_onedrive("competitor agent web", "en_comp_sku_fct.xlsx", "in", "day")
+        comp_pricing_df = oneDriveReader.read_excel_from_onedrive("price benchmarking", "en_comp_sku_fct.xlsx", "in", "day")
 
         # define ddl fields
         en_comp_sku_fct_cols = [

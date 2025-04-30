@@ -130,6 +130,10 @@ class AzureDBWriter():
             return 
         print(f"[DEBUG] netsuite_items_sold_hst_preprocess (Azure empty) CLEANs df of shape {self.myDf.shape}\n")
 
+    def email_comp_price_alerts (self, insertionDf, updateDf):
+        mydf = pd.concat([insertionDf, updateDf], axis = 0)
+        pass
+
 
     # Preprocess Competitor Agent Web xlsx file --> perform upsert on pandas dataframe and azure db
     # PK ~ ('release_dt','state_cd','en_sku','comp_sku','distr_typ')
