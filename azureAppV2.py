@@ -379,7 +379,7 @@ class AzureDBWriter():
 
             src_df = self.myDf.copy()
             leftMergeDf = src_df.merge(trg_df, on = PK_COLS, how = 'left', indicator = True)
-            insertionDf = leftMergeDf[leftMergeDf['_merge'] == 'left_only'].drop(columns = ['_merge'], axis = 1)
+            insertionDf = leftMergeDf[leftMergeDf['_merge'] == 'left_only'].drop(columns = ['_merge', 'mnf_stk_price_y'], axis = 1)
             print(f"[DEBUG] comp_agent_web_upsert_preprocess INSERTION GETS {insertionDf.shape}\n")
 
             if insertionDf.shape[0] == 0:
@@ -635,14 +635,16 @@ def daily_comp_pricing_job():
 if __name__ == "__main__":
     # Test Once
     daily_comp_pricing_job()
-    # monthly_promotion_brochure_job()
-    # monthly_netsuite_erp_job()
+    monthly_promotion_brochure_job()
+    monthly_netsuite_erp_job()
 
-    # exec 2 jobs on 15th at 12:30 am
-    # schedule.every().day.at("00:30").do(lambda: monthly_promotion_brochure_job() if datetime.now().day == 15 else None)
-    # schedule.every().day.at("00:30").do(lambda: monthly_netsuite_erp_job() if datetime.now().day == 15 else None)
+    # Schedule 2 jobs on 15th of each month at 12:30 am
+    schedule.every().day.at("00:30").do(lambda: monthly_promotion_brochure_job() if datetime.now().day == 15 else None)
+    schedule.every().day.at("01:00").do(lambda: monthly_netsuite_erp_job() if datetime.now().day == 15 else None)
+    # Schedule 1 job on 12:00 AM of each day
+    schedule.every().day.at("00:00").do(daily_comp_pricing_job)
 
-    # print("========================== Azure DB Cron Agent Started (Dev) ================================")
-    # while True:
-    #     schedule.run_pending()
-    #     time.sleep(60)  # wait for each 1 minute
+    print("========================== Azure DB Cron Agent Started (Dev) ================================")
+    while True:
+        schedule.run_pending()
+        time.sleep(60)  # wait for each 1 minute
