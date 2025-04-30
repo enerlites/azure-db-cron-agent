@@ -373,18 +373,11 @@ class AzureDBWriter():
         try:
             # Insertion logic based on non-duplicate PK
             engine = create_engine(self.DB_CONN, connect_args={"timeout": 30})
-            query = "SELECT distinct release_dt,state_cd,en_sku,comp_sku,distr_typ FROM landing.en_comp_sku_fct;"
+            query = "SELECT distinct release_dt,state_cd,en_sku,comp_sku,distr_typ,mnf_stk_price FROM landing.en_comp_sku_fct;"
             trg_df = pd.read_sql(query, engine)
             trg_df['release_dt'] = pd.to_datetime(trg_df.release_dt, format = "%Y-%m-%d", errors="coerce")
 
             src_df = self.myDf.copy()
-
-            # debug mode below
-            # print(f"[DEBUG] comp_agent_web_upsert_preprocess INSPECT pandas df type:\n{src_df.dtypes}\n{trg_df.dtypes}\n")
-            # subset_src = src_df.loc[(src_df.en_sku == "7941") & (src_df.release_dt == "2020-08-10") & (src_df.state_cd == "FL")]
-            # subset_trg = trg_df.loc[(trg_df.en_sku == "7941") & (trg_df.release_dt == "2020-08-10") & (trg_df.state_cd == "FL")]
-            # print(f"[DEBUG] comp_agent_web_upsert_preprocess\nPandas Memory df:\n{subset_src}\nAzure db df:\n{subset_trg}\n")
-
             leftMergeDf = src_df.merge(trg_df, on = PK_COLS, how = 'left', indicator = True)
             insertionDf = leftMergeDf[leftMergeDf['_merge'] == 'left_only'].drop(columns = ['_merge'], axis = 1)
             print(f"[DEBUG] comp_agent_web_upsert_preprocess INSERTION GETS {insertionDf.shape}\n")
@@ -395,10 +388,14 @@ class AzureDBWriter():
                 self.myDf = insertionDf
 
             # Update logic based on duplicate pk
-            updateDf = leftMergeDf[(leftMergeDf["_merge"] == "both")]\
+            updateDf = leftMergeDf[
+                                    (leftMergeDf["_merge"] == "both") 
+                                    & (leftMergeDf["mnf_stk_price_x"] != leftMergeDf["mnf_stk_price_y"])
+                                    & ~(pd.isna(leftMergeDf.mnf_stk_price_x))
+                                  ]\
                 .drop(columns = ["_merge"], axis = 1)
             
-            print(f"[DEBUG] comp_agent_web_upsert_preprocess UPDATE gets df:\n{updateDf.head(5)}\n")
+            print(f"[DEBUG] comp_agent_web_upsert_preprocess UPDATE gets df:\n{updateDf.shape}\n")
             
             if updateDf.shape[0] == 0:
                 return 
@@ -421,16 +418,16 @@ class AzureDBWriter():
                             AND distr_typ = :distr_typ;
                     """)
                     conn.execute(updt_stmt, {
-                        'mnf_stk_price': row.get('mnf_stk_price'),
-                        'comp_sku': row.get('comp_sku'),
-                        'quantity': row.get('quantity'),
-                        'mnf_desc': row.get('mnf_desc'),
-                        'rep_name': row.get('rep_name'),
+                        'mnf_stk_price': None if pd.isna(row.get('mnf_stk_price')) else row.get('mnf_stk_price'),
+                        'mnf': None if pd.isna(row.get('mnf')) else row.get('mnf'),
+                        'quantity': None if pd.isna(row.get('quantity')) else row.get('quantity'),
+                        'mnf_desc': None if pd.isna(row.get('mnf_desc')) else row.get('mnf_desc'),
+                        'rep_name': None if pd.isna(row.get('rep_name')) else row.get('rep_name'),
                         'sys_dt': row['sys_dt'],
                         'release_dt': row['release_dt'],
                         'state_cd': row['state_cd'],
                         'en_sku': row['en_sku'],
-                        'mnf': row['mnf'],
+                        'comp_sku': row['comp_sku'],
                         'distr_typ': row['distr_typ']
                     })
         except SQLAlchemyError as sqlerr: 
