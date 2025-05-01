@@ -14,6 +14,7 @@ from datetime import datetime
 from IPython.display import display
 import pytz
 import re
+from preprocessENPricing import *               # Internal SKU Pricing Related Preprocessing Funcs 
 
 # DB class for Azure SQL db functions
 class AzureDBWriter():
@@ -22,7 +23,104 @@ class AzureDBWriter():
         self.DB_CONN = f"mssql+pyodbc://sqladmin:{urllib.parse.quote_plus(os.getenv('DB_PASS'))}@{os.getenv('DB_SERVER')}:1433/enerlitesDB?driver=ODBC+Driver+17+for+SQL+Server&encrypt=yes"
         self.myDf = df 
         self.myCols = tableCols
+    
+    # Transform dataframe w.r.t. azure db ddl 
+    def __transform_df_wrt_azuredb(self, PK_COLS):
+        # print(f"[DEBUG] __transform_df_wrt_azuredb GETS {self.myDf}\n")
+        if self.myDf.empty:
+            return 
         
+        cleaned_df = self.myDf.copy() 
+        dfCols = cleaned_df.columns.tolist()
+        cleaned_df = cleaned_df.dropna(subset =PK_COLS)
+        for pk in PK_COLS:
+            cleaned_df.loc[:, pk] = cleaned_df[pk].apply(lambda x: x.strip() if isinstance(x, str) else x)
+
+        # conditional cleaning based on pandas column
+        # below for en_comp_sku_fct preprocessing
+        if "comp_sku" in dfCols:
+            cleaned_df.loc[:,"comp_sku"] = cleaned_df.comp_sku.apply(
+                lambda x: re.search(r'(?<=:)\s*(.*)', x).group(1)
+                if isinstance(x, str) and ':' in x else x
+            )
+        if "state_cd" in dfCols:
+            cleaned_df.loc[:,"state_cd"] = cleaned_df.state_cd.apply(
+                    lambda x: "FL" if x == "Florida"
+                            else "OR" if x == "Oregon"
+                            else "UT" if x == "Utah"
+                            else "CR" if x == "Costa Rica"
+                            else x.upper()
+                )
+        if "release_dt" in dfCols:
+            cleaned_df.loc[:,"release_dt"] = pd.to_datetime(cleaned_df.release_dt, format = "mixed", errors="coerce").dt.date
+        if "mnf" in dfCols:
+            cleaned_df.loc[:,"mnf"] = cleaned_df.mnf.apply(lambda x: x.capitalize() if isinstance(x, str) else x)
+        if "distr_typ" in dfCols:
+            cleaned_df.loc[:,"distr_typ"] = cleaned_df.distr_typ.str.capitalize()
+        if "distr" in dfCols:
+            cleaned_df.loc[:,"distr"] = cleaned_df.distr\
+                .apply(lambda mystr: ' '.join([word.capitalize() for word in mystr.split(' ')]) if isinstance(mystr, str) else mystr)
+        if "en_sku" in dfCols and "comp_sku" in dfCols:
+            cleaned_df.loc[:,["en_sku", "comp_sku"]] = cleaned_df[["en_sku", "comp_sku"]].astype("str")       # remember to cast to str instead of obj type
+
+        # Below for sku_master_dim_hst preprocessing 
+        if "Model No" in dfCols:
+            cleaned_df.loc[:, "Model No"] = cleaned_df.loc[:, "Model No"].apply(lambda x: str(x).strip())
+
+        # Deduplicate pandas in memory
+        cleaned_df = cleaned_df.drop_duplicates(subset = PK_COLS, keep = 'last')
+        self.myDf = cleaned_df
+
+    # Define Python ETL Update and Insert Logic 
+    # Read records in Azure db --> Generate Insertion df & Update df (respectively)
+    def __trigger_upsert_df_wrt_azuredb (self, SQLQuery, PK_COLS):
+        try:
+            engine = create_engine(self.DB_CONN, connect_args={"timeout": 30})
+            trg_df = pd.read_sql(SQLQuery, engine)
+            trgCols = trg_df.columns.tolist()
+            src_df = self.myDf.copy()
+
+            # Cast to Proper Python Type
+            if "release_dt" in trgCols:
+                trg_df['release_dt'] = pd.to_datetime(trg_df.release_dt, format = "%Y-%m-%d", errors="coerce")
+            if "src_updt_dt" in trgCols:
+                trg_df['src_updt_dt'] = pd.to_datetime(trg_df.src_updt_dt, format = "%Y-%m-%d", errors="coerce")
+            
+            leftMergeDf = src_df.merge(trg_df, on = PK_COLS, how = 'left', indicator = True)
+            if "mnf_stk_price" in trgCols:
+                insertionDf = leftMergeDf[leftMergeDf['_merge'] == 'left_only'].drop(columns = ['_merge', 'mnf_stk_price_y'], axis = 1)
+                # Update logic based on duplicate pk
+                updateDf = leftMergeDf[
+                                        (leftMergeDf["_merge"] == "both") 
+                                        & (leftMergeDf["mnf_stk_price_x"] != leftMergeDf["mnf_stk_price_y"])
+                                        & ~(pd.isna(leftMergeDf.mnf_stk_price_x))
+                                    ]\
+                    .drop(columns = ["_merge"], axis = 1)
+            elif "src_updt_dt" in trgCols:
+                insertionDf = leftMergeDf[leftMergeDf['_merge'] == 'left_only'].drop(columns = ['_merge', 'src_updt_dt_y'], axis = 1)
+                # Update logic based on duplicate pk
+                updateDf = leftMergeDf[
+                                        (leftMergeDf["_merge"] == "both") 
+                                        & (leftMergeDf["src_updt_dt_x"] != leftMergeDf["src_updt_dt_y"])
+                                        & ~(pd.isna(leftMergeDf.src_updt_dt_y))
+                                    ]\
+                    .drop(columns = ["_merge"], axis = 1)
+            print(f"[DEBUG] __trigger_upsert_df_wrt_azuredb INSERTION GETS {insertionDf.shape}\n")
+            print(f"[DEBUG] __trigger_upsert_df_wrt_azuredb UPDATE GETS {updateDf.shape}\n")
+
+            if insertionDf.shape[0] == 0:
+                self.myDf = pd.DataFrame()
+            else:
+                self.myDf = insertionDf
+            
+            if updateDf.shape[0] == 0:
+                return pd.DataFrame()
+            return updateDf
+        except SQLAlchemyError as sqlerr: 
+            print(f"[DEBUG] comp_agent_web_preprocess GETS Azure DB err: {sqlerr}\n")
+        finally:
+            engine.dispose()
+
     # Preprocess oceanAir Inventory in Python Memory
     # Dedup based on --> inv_eval_dt
     def oceanAir_Inv_preprocess(self):
@@ -140,63 +238,15 @@ class AzureDBWriter():
     def comp_agent_web_upsert_preprocess(self):
         PK_COLS = ['release_dt','state_cd','en_sku','comp_sku','distr_typ']
 
-        if self.myDf.empty:       # empty in memory dataframe 
-            return 
-        # Clean the primary key columns (not nullable + no leading trailing whitespace)
-        self.myDf = self.myDf.dropna(subset=PK_COLS)
-        for PK in PK_COLS:
-            self.myDf.loc[:,PK] = self.myDf[PK].apply(lambda x: x.strip() if isinstance(x,str) else x)
-
-        # pandas normalization and standardization 
-        self.myDf.loc[:,"comp_sku"] = self.myDf.comp_sku.apply(
-                lambda x: re.search(r'(?<=:)\s*(.*)', x).group(1)
-                if isinstance(x, str) and ':' in x else x
-            )
-        self.myDf.loc[:,"state_cd"] = self.myDf.state_cd.apply(
-                lambda x: "FL" if x == "Florida"
-                          else "OR" if x == "Oregon"
-                          else "UT" if x == "Utah"
-                          else "CR" if x == "Costa Rica"
-                          else x.upper()
-            )
-        self.myDf.loc[:,"release_dt"] = pd.to_datetime(self.myDf.release_dt, format = "mixed", errors="coerce").dt.date
-        self.myDf.loc[:,"mnf"] = self.myDf.mnf.apply(lambda x: x.capitalize() if isinstance(x, str) else x)
-        self.myDf.loc[:,"distr_typ"] = self.myDf.distr_typ.str.capitalize()
-        self.myDf.loc[:,"distr"] = self.myDf.distr\
-            .apply(lambda mystr: ' '.join([word.capitalize() for word in mystr.split(' ')]) if isinstance(mystr, str) else mystr)
-        self.myDf.loc[:,["en_sku", "comp_sku"]] = self.myDf[["en_sku", "comp_sku"]].astype("str")       # remember to cast to str instead of obj type
-
-        # dedup pandas dataframe
-        self.myDf = self.myDf.drop_duplicates(subset = PK_COLS, keep = 'last')
+        # Transform pandas df wrt database settings
+        self.__transform_df_wrt_azuredb(PK_COLS)
 
         try:
             # Insertion logic based on non-duplicate PK
             engine = create_engine(self.DB_CONN, connect_args={"timeout": 30})
-            query = "SELECT distinct release_dt,state_cd,en_sku,comp_sku,distr_typ,mnf_stk_price FROM landing.en_comp_sku_fct;"
-            trg_df = pd.read_sql(query, engine)
-            trg_df['release_dt'] = pd.to_datetime(trg_df.release_dt, format = "%Y-%m-%d", errors="coerce")
-
-            src_df = self.myDf.copy()
-            leftMergeDf = src_df.merge(trg_df, on = PK_COLS, how = 'left', indicator = True)
-            insertionDf = leftMergeDf[leftMergeDf['_merge'] == 'left_only'].drop(columns = ['_merge', 'mnf_stk_price_y'], axis = 1)
-            print(f"[DEBUG] comp_agent_web_upsert_preprocess INSERTION GETS {insertionDf.shape}\n")
-
-            if insertionDf.shape[0] == 0:
-                self.myDf = pd.DataFrame()
-            else:
-                self.myDf = insertionDf
-
-            # Update logic based on duplicate pk
-            updateDf = leftMergeDf[
-                                    (leftMergeDf["_merge"] == "both") 
-                                    & (leftMergeDf["mnf_stk_price_x"] != leftMergeDf["mnf_stk_price_y"])
-                                    & ~(pd.isna(leftMergeDf.mnf_stk_price_x))
-                                  ]\
-                .drop(columns = ["_merge"], axis = 1)
-            
-            print(f"[DEBUG] comp_agent_web_upsert_preprocess UPDATE gets df:\n{updateDf.shape}\n")
-            
-            if updateDf.shape[0] == 0:
+            SQLQuery = "SELECT distinct release_dt,state_cd,en_sku,comp_sku,distr_typ,mnf_stk_price FROM landing.en_comp_sku_fct;"
+            updateDf = self.__trigger_upsert_df_wrt_azuredb(SQLQuery, PK_COLS)
+            if updateDf.empty:
                 return 
             updateDf["sys_dt"] = pd.to_datetime('now')
             with engine.begin() as conn:  # Ensures commit/rollback
@@ -233,7 +283,23 @@ class AzureDBWriter():
             print(f"[DEBUG] comp_agent_web_preprocess GETS Azure DB err: {sqlerr}\n")
         finally:
             engine.dispose()
+
+    # Preprocess sku_master_dim_hst xlsx file --> perform upsert on pandas dataframe and azure db
+    # PK ~ ('model_no','price_model','lower_bucket','upper_bucket')
+    def sku_master_dim_hst_preprocess(self):
+        PK_COLS = ['model_no','price_model','lower_bucket','upper_bucket']
+        df = self.myDf.copy()
+        # update unit price wrt pallet
+        price_updt_df = update_sku_master_unitprice_wrt_pallet(df)
+        # convert to tabular form
+        pivoted_df = pivot_sku_master_price_conds(price_updt_df)
+        self.myDf = pivoted_df
         
+        # Transform pandas df w.r.t. azure ddl
+        self.__transform_df_wrt_azuredb(PK_COLS)
+
+
+
     # commit flatFile 2 azure db 
     def flatFile2db (self, schema, table):
         engine = create_engine(self.DB_CONN)
