@@ -94,11 +94,13 @@ class OneDriveFlatFileReader:
                         if file['name'] == fileName and not time_eval_level:
                             return file['@microsoft.graph.downloadUrl']
                         # align file modification ts w.r.t day 
-                        elif file['name'] == fileName and time_eval_level == 'day':
+                        elif file['name'] == fileName:
                             modified_ts = datetime.strptime(file['lastModifiedDateTime'], "%Y-%m-%dT%H:%M:%SZ")
                             modified_y, modified_m, modified_d = modified_ts.year, modified_ts.month, modified_ts.day
 
-                            if modified_y == local_year and modified_m == local_month and modified_d == local_day:
+                            if modified_y == local_year and modified_m == local_month and modified_d == local_day and time_eval_level == 'day':
+                                return file['@microsoft.graph.downloadUrl']
+                            elif modified_y == local_year and modified_m == local_month and time_eval_level == 'month':
                                 return file['@microsoft.graph.downloadUrl']
             print(f"\"{fileName}\" either not exists in \"{folderName}\" folder or not modified ! (Skip db load)\n")         
             return None
