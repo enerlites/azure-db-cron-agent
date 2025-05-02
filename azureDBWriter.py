@@ -26,11 +26,11 @@ class AzureDBWriter():
     
     # Transform dataframe w.r.t. azure db ddl 
     def __transform_df_wrt_azuredb(self, PK_COLS):
-        # print(f"[DEBUG] __transform_df_wrt_azuredb GETS {self.myDf}\n")
         if self.myDf.empty:
             return 
         
         cleaned_df = self.myDf.copy() 
+        cleaned_df.columns = self.myCols[:-1]                   # Intentionally omit the last auto-generated timestamp
         dfCols = cleaned_df.columns.tolist()
         cleaned_df = cleaned_df.dropna(subset =PK_COLS)
         for pk in PK_COLS:
@@ -66,6 +66,8 @@ class AzureDBWriter():
         # Below for sku_master_dim_hst preprocessing 
         if "Model No" in dfCols:
             cleaned_df.loc[:, "Model No"] = cleaned_df.loc[:, "Model No"].apply(lambda x: str(x).strip())
+        if "src_updt_dt" in dfCols:
+            cleaned_df.loc[:,"src_updt_dt"] = pd.to_datetime(cleaned_df.src_updt_dt, format = "mixed", errors="coerce").dt.date
 
         # Deduplicate pandas in memory
         cleaned_df = cleaned_df.drop_duplicates(subset = PK_COLS, keep = 'last')
@@ -77,17 +79,20 @@ class AzureDBWriter():
         try:
             engine = create_engine(self.DB_CONN, connect_args={"timeout": 30})
             trg_df = pd.read_sql(SQLQuery, engine)
-            trgCols = trg_df.columns.tolist()
+            srcCols = self.myCols
+            print(f"[DEBUG] __trigger_upsert_df_wrt_azuredb cols GET {srcCols}\n")
             src_df = self.myDf.copy()
+            insertionDf, updateDf = pd.DataFrame(), pd.DataFrame()
 
             # Cast to Proper Python Type
-            if "release_dt" in trgCols:
+            if "release_dt" in srcCols:
                 trg_df['release_dt'] = pd.to_datetime(trg_df.release_dt, format = "%Y-%m-%d", errors="coerce")
-            if "src_updt_dt" in trgCols:
+            if "src_updt_dt" in srcCols:
                 trg_df['src_updt_dt'] = pd.to_datetime(trg_df.src_updt_dt, format = "%Y-%m-%d", errors="coerce")
-            
+
+            print(f"[DEBUG] __trigger_upsert_df_wrt_azuredb GETs src_df of shape {src_df.shape}\n")
             leftMergeDf = src_df.merge(trg_df, on = PK_COLS, how = 'left', indicator = True)
-            if "mnf_stk_price" in trgCols:
+            if "mnf_stk_price" in srcCols:
                 insertionDf = leftMergeDf[leftMergeDf['_merge'] == 'left_only'].drop(columns = ['_merge', 'mnf_stk_price_y'], axis = 1)
                 # Update logic based on duplicate pk
                 updateDf = leftMergeDf[
@@ -96,8 +101,9 @@ class AzureDBWriter():
                                         & ~(pd.isna(leftMergeDf.mnf_stk_price_x))
                                     ]\
                     .drop(columns = ["_merge"], axis = 1)
-            elif "src_updt_dt" in trgCols:
+            elif "src_updt_dt" in srcCols:
                 insertionDf = leftMergeDf[leftMergeDf['_merge'] == 'left_only'].drop(columns = ['_merge', 'src_updt_dt_y'], axis = 1)
+                print(f"[DEBUG] __trigger_upsert_df_wrt_azuredb GETs leftMergeDf of shape {leftMergeDf.shape}\n")
                 # Update logic based on duplicate pk
                 updateDf = leftMergeDf[
                                         (leftMergeDf["_merge"] == "both") 
@@ -240,6 +246,8 @@ class AzureDBWriter():
 
         # Transform pandas df wrt database settings
         self.__transform_df_wrt_azuredb(PK_COLS)
+        if self.myDf.empty:
+            return 
 
         try:
             # Insertion logic based on non-duplicate PK
@@ -291,14 +299,59 @@ class AzureDBWriter():
         df = self.myDf.copy()
         # update unit price wrt pallet
         price_updt_df = update_sku_master_unitprice_wrt_pallet(df)
+        price_updt_df.loc[:,'src_updt_dt'] = pd.to_datetime(price_updt_df.loc[:,'src_updt_dt'], format='mixed', errors= 'coerce').dt.date
+        print(f"[DEBUG] sku_master_dim_hst_preprocess Update Price:\n {price_updt_df.head(2)}\n")
         # convert to tabular form
         pivoted_df = pivot_sku_master_price_conds(price_updt_df)
+        print(f"[DEBUG] sku_master_dim_hst_preprocess Pivot df:\n {pivoted_df.head(2)}\n")
         self.myDf = pivoted_df
         
         # Transform pandas df w.r.t. azure ddl
         self.__transform_df_wrt_azuredb(PK_COLS)
+        if self.myDf.empty:
+            return 
 
-
+        # Write Insertion df to memory and return update df
+        try:
+            # Insertion logic based on non-duplicate PK
+            engine = create_engine(self.DB_CONN, connect_args={"timeout": 30})
+            SQLQuery = "SELECT distinct model_no,price_model,lower_bucket,upper_bucket, src_updt_dt FROM landing.sku_master_dim_hst;"
+            updateDf = self.__trigger_upsert_df_wrt_azuredb(SQLQuery, PK_COLS)
+            if updateDf.empty:
+                return 
+            CUR_TS = pd.to_datetime('now')
+            with engine.begin() as conn:  # Ensures commit/rollback
+                for _, row in updateDf.iterrows():
+                    # Use parameterized SQL to avoid SQL injection and type issues
+                    updt_stmt = text("""
+                        UPDATE landing.sku_master_dim_hst 
+                        SET src_updt_dt = :src_updt_dt,
+                            descript = :descript,
+                            prod_cd = :prod_cd,
+                            unit_cost = :unit_cost,
+                            unit_price = :unit_price,
+                            data_dt = :data_dt
+                        WHERE model_no = :model_no
+                            AND price_model = :price_model
+                            AND lower_bucket = :lower_bucket
+                            AND upper_bucket = :upper_bucket;
+                    """)
+                    conn.execute(updt_stmt, {
+                        'src_updt_dt': None if pd.isna(row.get('src_updt_dt')) else row.get('src_updt_dt'),
+                        'descript': None if pd.isna(row.get('descript')) else row.get('descript'),
+                        'prod_cd': None if pd.isna(row.get('prod_cd')) else row.get('prod_cd'),
+                        'unit_cost': None if pd.isna(row.get('unit_cost')) else row.get('unit_cost'),
+                        'unit_price': None if pd.isna(row.get('unit_price')) else row.get('unit_price'),
+                        'data_dt': CUR_TS,
+                        'model_no': row['model_no'],
+                        'price_model': row['price_model'],
+                        'lower_bucket': row['lower_bucket'],
+                        'upper_bucket': row['upper_bucket']
+                    })
+        except SQLAlchemyError as sqlerr: 
+            print(f"[DEBUG] sku_master_dim_hst_preprocess GETS Azure DB err: {sqlerr}\n")
+        finally:
+            engine.dispose()
 
     # commit flatFile 2 azure db 
     def flatFile2db (self, schema, table):

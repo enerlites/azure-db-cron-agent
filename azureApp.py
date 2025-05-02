@@ -156,13 +156,45 @@ def daily_comp_pricing_job():
 
     except Exception as e:
         print(f"{str(e)}")
+
+# Define monthly cron job for Enerlites Internal Pricing to Azure database
+def monthly_en_internal_pricing_job():
+    try:
+        oneDriveReader = OneDriveFlatFileReader("andrew.chen@enerlites.com")
+        en_sku_pricing_df = oneDriveReader.read_excel_from_onedrive("price benchmarking", "sku_master_dim_hst.xlsx", "master price", "month")
+
+        # define ddl fields
+        en_sku_pricing_cols = [
+            "src_updt_dt",
+            "model_no",
+            "descript",
+            "cat",
+            "prod_cd",
+            "supply_chain_lvl",
+            "prod_lvl",
+            "unit_cost",
+            "comp_pricing_model_num",
+            "unit_price",
+            "price_model",
+            "lower_bucket",
+            "upper_bucket",
+            "data_dt"
+        ]
+
+        enPricingWriter = AzureDBWriter(en_sku_pricing_df, en_sku_pricing_cols)
+        enPricingWriter.sku_master_dim_hst_preprocess()
+        enPricingWriter.flatFile2db('landing', 'sku_master_dim_hst')
+
+    except Exception as e:
+        print(f"{str(e)}")
            
 # Test Section 
 if __name__ == "__main__":
     # Test Once
     daily_comp_pricing_job()
-    monthly_promotion_brochure_job()
-    monthly_netsuite_erp_job()
+    # monthly_promotion_brochure_job()
+    # monthly_netsuite_erp_job()
+    monthly_en_internal_pricing_job()
 
     # Schedule 2 jobs on 15th of each month at 12:30 am
     schedule.every().day.at("00:30").do(lambda: monthly_promotion_brochure_job() if datetime.now().day == 15 else None)
