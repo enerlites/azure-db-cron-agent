@@ -34,7 +34,7 @@ class AzureDBWriter():
         dfCols = cleaned_df.columns.tolist()
         cleaned_df = cleaned_df.dropna(subset =PK_COLS)
         for pk in PK_COLS:
-            cleaned_df.loc[:, pk] = cleaned_df[pk].apply(lambda x: x.strip() if isinstance(x, str) else x)
+            cleaned_df.loc[:, pk] = cleaned_df[pk].apply(lambda x: re.sub(r'[\u00A0\u200B\uFEFF\t\n\r]+', '', x).strip() if isinstance(x, str) else x)
 
         # conditional cleaning based on pandas column
         # below for en_comp_sku_fct preprocessing
@@ -64,8 +64,8 @@ class AzureDBWriter():
             cleaned_df.loc[:,["en_sku", "comp_sku"]] = cleaned_df[["en_sku", "comp_sku"]].astype("str")       # remember to cast to str instead of obj type
 
         # Below for sku_master_dim_hst preprocessing 
-        if "Model No" in dfCols:
-            cleaned_df.loc[:, "Model No"] = cleaned_df.loc[:, "Model No"].apply(lambda x: str(x).strip())
+        if "model_no" in dfCols:
+            cleaned_df.loc[:, "model_no"] = cleaned_df.loc[:, "model_no"].apply(lambda x: str(x).strip()).astype(str)
         if "src_updt_dt" in dfCols:
             cleaned_df.loc[:,"src_updt_dt"] = pd.to_datetime(cleaned_df.src_updt_dt, format = "mixed", errors="coerce").dt.date
 
@@ -80,7 +80,6 @@ class AzureDBWriter():
             engine = create_engine(self.DB_CONN, connect_args={"timeout": 30})
             trg_df = pd.read_sql(SQLQuery, engine)
             srcCols = self.myCols
-            print(f"[DEBUG] __trigger_upsert_df_wrt_azuredb cols GET {srcCols}\n")
             src_df = self.myDf.copy()
             insertionDf, updateDf = pd.DataFrame(), pd.DataFrame()
 
@@ -90,7 +89,10 @@ class AzureDBWriter():
             if "src_updt_dt" in srcCols:
                 trg_df['src_updt_dt'] = pd.to_datetime(trg_df.src_updt_dt, format = "%Y-%m-%d", errors="coerce")
 
-            print(f"[DEBUG] __trigger_upsert_df_wrt_azuredb GETs src_df of shape {src_df.shape}\n")
+            # Test Section Below (explore bad price Model)
+            # display(src_df.loc[src_df.model_no == "7701"])
+            # display(trg_df.loc[trg_df.model_no == "7701"])
+
             leftMergeDf = src_df.merge(trg_df, on = PK_COLS, how = 'left', indicator = True)
             if "mnf_stk_price" in srcCols:
                 insertionDf = leftMergeDf[leftMergeDf['_merge'] == 'left_only'].drop(columns = ['_merge', 'mnf_stk_price_y'], axis = 1)
@@ -103,7 +105,6 @@ class AzureDBWriter():
                     .drop(columns = ["_merge"], axis = 1)
             elif "src_updt_dt" in srcCols:
                 insertionDf = leftMergeDf[leftMergeDf['_merge'] == 'left_only'].drop(columns = ['_merge', 'src_updt_dt_y'], axis = 1)
-                print(f"[DEBUG] __trigger_upsert_df_wrt_azuredb GETs leftMergeDf of shape {leftMergeDf.shape}\n")
                 # Update logic based on duplicate pk
                 updateDf = leftMergeDf[
                                         (leftMergeDf["_merge"] == "both") 
