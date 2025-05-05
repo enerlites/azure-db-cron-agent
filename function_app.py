@@ -24,3 +24,10 @@ def monthly_erp_task(monthlyERPCron: func.TimerRequest) -> None:
 def daily_comp_pricing_task(dailyCompPricingCron: func.TimerRequest) -> None:
     logging.info("Running: daily_comp_pricing_job()")
     daily_comp_pricing_job()
+
+# Run on 12:30 AM PDT on 15th of each month
+@app.function_name(name="monthlySkuPricingTask")
+@app.schedule(schedule="0 30 8 15 * *", arg_name="monthlySkuPricingCron", run_on_startup=True, use_monitor=True)
+def monthly_sku_pricing_task(monthlySkuPricingCron: func.TimerRequest) -> None:
+    logging.info("Running: monthly_en_internal_pricing_job()")
+    monthly_en_internal_pricing_job()
