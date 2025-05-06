@@ -14,7 +14,7 @@ from datetime import datetime
 from IPython.display import display
 import pytz
 import re
-from preprocessENPricing import *               # Internal SKU Pricing Related Preprocessing Funcs 
+from shared.preprocessENPricing import *               # Internal SKU Pricing Related Preprocessing Funcs 
 
 # DB class for Azure SQL db functions
 class AzureDBWriter():

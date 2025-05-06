@@ -7,8 +7,8 @@ c) intend to be deployed over Azure Function App
 All configuration vars could be found from: https://portal.azure.com/?quickstart=true#home
 
 '''
-from OneDriveFlatFileReader import *
-from azureDBWriter import *
+from shared.OneDriveFlatFileReader import *
+from shared.azureDBWriter import *
 
 # Define a monthly promotion sku job (run on 12:30 AM on 15th of each month)
 def monthly_promotion_brochure_job():
