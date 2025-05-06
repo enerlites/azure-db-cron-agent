@@ -4,6 +4,7 @@ from azureApp import *
 
 app = func.FunctionApp()
 
+# Execute on 12:30PM Los Angeles Time
 @app.function_name(name="monthlySkuPromoTask")
 @app.schedule(schedule="0 30 0 15 * *", timezone="America/Los_Angeles", arg_name="monthlyPromoCron", run_on_startup=True, use_monitor=True)
 def monthly_sku_promo_task(monthlyPromoCron: func.TimerRequest) -> None:
