@@ -8,7 +8,6 @@ from urllib.parse import quote
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 import urllib.parse
-import schedule 
 import time 
 from datetime import datetime
 from IPython.display import display
@@ -119,10 +118,9 @@ class AzureDBWriter():
                 self.myDf = pd.DataFrame()
             else:
                 self.myDf = insertionDf
-            
-            if updateDf.shape[0] == 0:
-                return pd.DataFrame()
-            return updateDf
+
+            # Return both insertionDf and updateDf
+            return insertionDf, updateDf
         except SQLAlchemyError as sqlerr: 
             print(f"[DEBUG] comp_agent_web_preprocess GETS Azure DB err: {sqlerr}\n")
         finally:
@@ -235,8 +233,9 @@ class AzureDBWriter():
             return 
         print(f"[DEBUG] netsuite_items_sold_hst_preprocess (Azure empty) CLEANs df of shape {self.myDf.shape}\n")
 
-    def email_comp_price_alerts (self, insertionDf, updateDf):
-        mydf = pd.concat([insertionDf, updateDf], axis = 0)
+    # Prepare records with pricing alerts 
+    # When competitor's pricing is 15% lower than EN Pricing 
+    def get_pricing_alert_records (self, insertionDf, updateDf, skuQuery):
         pass
 
 
@@ -254,7 +253,7 @@ class AzureDBWriter():
             # Insertion logic based on non-duplicate PK
             engine = create_engine(self.DB_CONN, connect_args={"timeout": 30})
             SQLQuery = "SELECT distinct release_dt,state_cd,en_sku,comp_sku,distr_typ,mnf_stk_price FROM landing.en_comp_sku_fct;"
-            updateDf = self.__trigger_upsert_df_wrt_azuredb(SQLQuery, PK_COLS)
+            insertionDf, updateDf = self.__trigger_upsert_df_wrt_azuredb(SQLQuery, PK_COLS)
             if updateDf.empty:
                 return 
             updateDf["sys_dt"] = pd.to_datetime('now')
@@ -317,7 +316,7 @@ class AzureDBWriter():
             # Insertion logic based on non-duplicate PK
             engine = create_engine(self.DB_CONN, connect_args={"timeout": 30})
             SQLQuery = "SELECT distinct model_no,price_model,lower_bucket,upper_bucket, src_updt_dt FROM landing.sku_master_dim_hst;"
-            updateDf = self.__trigger_upsert_df_wrt_azuredb(SQLQuery, PK_COLS)
+            _, updateDf = self.__trigger_upsert_df_wrt_azuredb(SQLQuery, PK_COLS)
             if updateDf.empty:
                 return 
             CUR_TS = pd.to_datetime('now')

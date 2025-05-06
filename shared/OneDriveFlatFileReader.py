@@ -7,9 +7,9 @@ from dotenv import load_dotenv
 from urllib.parse import quote
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
-import urllib.parse
-import schedule 
-import time 
+# import urllib.parse
+# import schedule 
+# import time 
 from datetime import datetime
 from IPython.display import display
 import pytz

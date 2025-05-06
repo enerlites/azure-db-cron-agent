@@ -192,17 +192,17 @@ def monthly_en_internal_pricing_job():
 if __name__ == "__main__":
     # Test Once
     daily_comp_pricing_job()
-    # monthly_promotion_brochure_job()
-    # monthly_netsuite_erp_job()
+    monthly_promotion_brochure_job()
+    monthly_netsuite_erp_job()
     monthly_en_internal_pricing_job()
 
-    # Schedule 2 jobs on 15th of each month at 12:30 am
-    schedule.every().day.at("00:30").do(lambda: monthly_promotion_brochure_job() if datetime.now().day == 15 else None)
-    schedule.every().day.at("01:00").do(lambda: monthly_netsuite_erp_job() if datetime.now().day == 15 else None)
-    # Schedule 1 job on 23:00 AM of each day
-    schedule.every().day.at("23:00").do(daily_comp_pricing_job)
+    # # Schedule 2 jobs on 15th of each month at 12:30 am
+    # schedule.every().day.at("00:30").do(lambda: monthly_promotion_brochure_job() if datetime.now().day == 15 else None)
+    # schedule.every().day.at("01:00").do(lambda: monthly_netsuite_erp_job() if datetime.now().day == 15 else None)
+    # # Schedule 1 job on 23:00 AM of each day
+    # schedule.every().day.at("23:00").do(daily_comp_pricing_job)
 
-    print("========================== Azure DB Cron Agent Started (Dev) ================================")
-    while True:
-        schedule.run_pending()
-        time.sleep(60)  # wait for each 1 minute
+    # print("========================== Azure DB Cron Agent Started (Dev) ================================")
+    # while True:
+    #     schedule.run_pending()
+    #     time.sleep(60)  # wait for each 1 minute
