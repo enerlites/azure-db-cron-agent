@@ -11,7 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 # import schedule 
 # import time 
 from datetime import datetime
-from IPython.display import display
+# from IPython.display import display
 import pytz
 import re
 
