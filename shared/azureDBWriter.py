@@ -20,7 +20,10 @@ class AzureDBWriter():
         self.DB_CONN = f"mssql+pyodbc://sqladmin:{urllib.parse.quote_plus(os.getenv('DB_PASS'))}@{os.getenv('DB_SERVER')}:1433/enerlitesDB?driver=ODBC+Driver+17+for+SQL+Server&encrypt=yes"
         self.myDf = df 
         self.myCols = tableCols
+
+        # set up class level logger in Azure Prod env
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.setLevel(logging.INFO)
     
     # Transform dataframe w.r.t. azure db ddl 
     def __transform_df_wrt_azuredb(self, PK_COLS):
@@ -33,7 +36,7 @@ class AzureDBWriter():
         cleaned_df = cleaned_df.dropna(subset =PK_COLS)
         for pk in PK_COLS:
             cleaned_df.loc[:, pk] = cleaned_df[pk].apply(lambda x: re.sub(r'[\u00A0\u200B\uFEFF\t\n\r]+', '', x).strip() if isinstance(x, str) else x)
-            
+
         # conditional cleaning based on pandas column
         # below for en_comp_sku_fct preprocessing
         if "comp_sku" in dfCols:
@@ -390,9 +393,9 @@ class AzureDBWriter():
                     method= None,
                     chunksize=batch_size
                 )
-            print(f"Successfully wrote {len(df)} rows to {table}")
+            self.logger.info(f"[Azure] Upserted {df.shape[0]} rows to {schema}.{table} !\n")
             
         except Exception as e:
-            print(f"Error writing to database: {str(e)}")
+            self.logger.error(f"[Azure] Error writing to database: {str(e)} !\n", exc_info=True)
         finally:
             engine.dispose()
