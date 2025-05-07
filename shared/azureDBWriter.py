@@ -17,7 +17,19 @@ import logging                                         # log errs in production 
 class AzureDBWriter():
     def __init__(self, df, tableCols):
         load_dotenv()           # load the .env vars
-        self.DB_CONN = f"mssql+pyodbc://sqladmin:{urllib.parse.quote_plus(os.getenv('DB_PASS'))}@{os.getenv('DB_SERVER')}:1433/enerlitesDB?driver=ODBC+Driver+17+for+SQL+Server&encrypt=yes"
+
+        ODBC_18_CONN = urllib.parse.quote_plus(
+            f"Driver={{ODBC Driver 18 for SQL Server}};"
+            f"Server=tcp:{os.getenv('DB_SERVER')},1433;"
+            f"Database=enerlitesDB;"
+            f"Uid=sqladmin;"
+            f"Pwd={os.getenv('DB_PASS')};"
+            f"Encrypt=yes;"
+            f"TrustServerCertificate=no;"
+            f"Connection Timeout=30;"
+        )
+        self.DB_CONN = f"mssql+pyodbc:///?odbc_connect={ODBC_18_CONN}"
+        # self.DB_CONN = f"mssql+pyodbc://sqladmin:{urllib.parse.quote_plus(os.getenv('DB_PASS'))}@{os.getenv('DB_SERVER')}:1433/enerlitesDB?driver=ODBC+Driver+17+for+SQL+Server&encrypt=yes"
         self.myDf = df 
         self.myCols = tableCols
 
