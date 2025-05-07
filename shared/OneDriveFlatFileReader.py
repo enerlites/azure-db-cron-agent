@@ -4,7 +4,6 @@ import requests
 import pandas as pd
 from io import BytesIO
 from dotenv import load_dotenv
-from urllib.parse import quote
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 # import urllib.parse
