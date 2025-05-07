@@ -130,7 +130,7 @@ class AzureDBWriter():
             # Return both insertionDf and updateDf
             return insertionDf, updateDf
         except SQLAlchemyError as sqlerr: 
-            print(f"[DEBUG] comp_agent_web_preprocess GETS Azure DB err: {sqlerr}\n")
+            self.logger.info(f"[DEBUG] comp_agent_web_preprocess GETS Azure DB err: {sqlerr}\n")
         finally:
             engine.dispose()
     
@@ -218,7 +218,7 @@ class AzureDBWriter():
         
         # Eliminate bad transaction records
         new_df = new_df[new_df.quantity != 0]
-        print(f"[DEBUG] __items_sold_hst_clean PROCESSED df\n{df.shape}\n")
+        self.logger.info(f"[DEBUG] __items_sold_hst_clean PROCESSED df\n{df.shape}\n")
 
         self.myDf = new_df
 
@@ -242,9 +242,9 @@ class AzureDBWriter():
             src_df = src_df[~src_df.pk.isin(trg_df.pk)]
             src_df = src_df.drop(columns=['pk'], axis=1)
             self.myDf = src_df
-            print(f"[DEBUG] netsuite_items_sold_hst_preprocess (Memory Dedup) CLEANs df of shape {self.myDf.shape}\n")
+            self.logger.info(f"[DEBUG] netsuite_items_sold_hst_preprocess (Memory Dedup) CLEANs df of shape {self.myDf.shape}\n")
             return 
-        print(f"[DEBUG] netsuite_items_sold_hst_preprocess (Azure empty) CLEANs df of shape {self.myDf.shape}\n")
+        self.logger.info(f"[DEBUG] netsuite_items_sold_hst_preprocess (Azure empty) CLEANs df of shape {self.myDf.shape}\n")
 
     # Prepare records with pricing alerts 
     # When competitor's pricing is 15% lower than EN Pricing 
@@ -301,7 +301,7 @@ class AzureDBWriter():
                         'distr_typ': row['distr_typ']
                     })
         except SQLAlchemyError as sqlerr: 
-            print(f"[DEBUG] comp_agent_web_preprocess GETS Azure DB err: {sqlerr}\n")
+            self.logger.error(f"[DEBUG] comp_agent_web_preprocess GETS Azure DB err: {sqlerr}\n")
         finally:
             engine.dispose()
 
@@ -360,7 +360,7 @@ class AzureDBWriter():
                         'upper_bucket': row['upper_bucket']
                     })
         except SQLAlchemyError as sqlerr: 
-            print(f"[DEBUG] sku_master_dim_hst_preprocess GETS Azure DB err: {sqlerr}\n")
+            self.logger.error(f"[DEBUG] sku_master_dim_hst_preprocess GETS Azure DB err: {sqlerr}\n")
         finally:
             engine.dispose()
 
