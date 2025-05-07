@@ -70,4 +70,4 @@ jobs:
           app-name: 'azure-db-cron-agent'
           slot-name: 'Production'
           package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_DC14C7A9FB4B46B8AA397D0872F6ECA5 }}
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_AZDBCRONAGENT }}
