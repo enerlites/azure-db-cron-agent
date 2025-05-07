@@ -1,6 +1,4 @@
 import os
-import msal
-import requests
 import pandas as pd
 from io import BytesIO
 from dotenv import load_dotenv
@@ -13,6 +11,7 @@ from datetime import datetime
 import pytz
 import re
 from shared.preprocessENPricing import *               # Internal SKU Pricing Related Preprocessing Funcs 
+import logging                                         # log errs in production env
 
 # DB class for Azure SQL db functions
 class AzureDBWriter():
@@ -21,6 +20,7 @@ class AzureDBWriter():
         self.DB_CONN = f"mssql+pyodbc://sqladmin:{urllib.parse.quote_plus(os.getenv('DB_PASS'))}@{os.getenv('DB_SERVER')}:1433/enerlitesDB?driver=ODBC+Driver+17+for+SQL+Server&encrypt=yes"
         self.myDf = df 
         self.myCols = tableCols
+        self.logger = logging.getLogger(self.__class__.__name__)
     
     # Transform dataframe w.r.t. azure db ddl 
     def __transform_df_wrt_azuredb(self, PK_COLS):
@@ -33,7 +33,7 @@ class AzureDBWriter():
         cleaned_df = cleaned_df.dropna(subset =PK_COLS)
         for pk in PK_COLS:
             cleaned_df.loc[:, pk] = cleaned_df[pk].apply(lambda x: re.sub(r'[\u00A0\u200B\uFEFF\t\n\r]+', '', x).strip() if isinstance(x, str) else x)
-
+            
         # conditional cleaning based on pandas column
         # below for en_comp_sku_fct preprocessing
         if "comp_sku" in dfCols:
@@ -66,6 +66,12 @@ class AzureDBWriter():
             cleaned_df.loc[:, "model_no"] = cleaned_df.loc[:, "model_no"].apply(lambda x: str(x).strip()).astype(str)
         if "src_updt_dt" in dfCols:
             cleaned_df.loc[:,"src_updt_dt"] = pd.to_datetime(cleaned_df.src_updt_dt, format = "mixed", errors="coerce").dt.date
+        
+        # Below for oneDrive_promo_sku_base preprocessing
+        if "category" in dfCols:
+            cleaned_df.loc[:,"category"] = cleaned_df.loc[:,"category"].apply(lambda x: 'Discontinued' if x == 'Discontinued item' else x)
+        if "promo_reason" in dfCols:
+            cleaned_df.loc[:,"promo_reason"] = cleaned_df.loc[:,"promo_reason"].apply(lambda x: 'Discontinued' if x == 'Disontinued' else x)
 
         # Deduplicate pandas in memory
         cleaned_df = cleaned_df.drop_duplicates(subset = PK_COLS, keep = 'last')
@@ -124,6 +130,11 @@ class AzureDBWriter():
             print(f"[DEBUG] comp_agent_web_preprocess GETS Azure DB err: {sqlerr}\n")
         finally:
             engine.dispose()
+    
+    # Preprocess oneDrive_hst_promo_sku in Python Memory
+    def hst_promo_sku_preprocess(self):
+        PK_COLS = ['month_st', 'month_ed', 'sku']
+        self.__transform_df_wrt_azuredb(PK_COLS)
 
     # Preprocess oceanAir Inventory in Python Memory
     # Dedup based on --> inv_eval_dt
@@ -363,22 +374,9 @@ class AzureDBWriter():
             # append getdate() datetim2 
             df['cur_ts'] = pd.to_datetime('now')
 
-            '''Below section for data cleaning prior to db load'''
-            if "promo dt" in df.columns:
-                df["promo dt"] = pd.to_datetime(df["promo dt"],format="mixed",errors='coerce') 
-            # handle manual input err
-            if "Promotion Reason" in df.columns:
-                df["Promotion Reason"] = df["Promotion Reason"].apply(lambda x: 'Discontinued' if x == 'Disontinued' else x)
-            if "promo category" in df.columns:
-                df["promo category"] = df["promo category"].apply(lambda x: 'Discontinued' if x == 'Discontinued item' else x)   
-            # drop Nan in promo base xlsx 
-            if 'sku' in df.columns:
-                df = df.dropna(subset = ['sku'])
-
             # persist df name with that of defined in ssms   
             df.columns = tableCols
             self.myDf = df
-            print(f"[DEBUG] flatFile2db GETs df of shape {self.myDf.shape}\n")
             
             batch_size = 500
             for i in range(0, len(df), batch_size):

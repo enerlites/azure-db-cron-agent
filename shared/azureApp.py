@@ -76,6 +76,7 @@ def monthly_promotion_brochure_job():
             sheet_name='past sku promo'
         )
         hst_sku_db = AzureDBWriter(hst_sku_df,sku_hstCols)
+        hst_sku_db.hst_promo_sku_preprocess()
         hst_sku_db.flatFile2db('landing', 'oneDrive_hst_promo_sku')
 
         oceanAirInv_df = oneDriveReader.read_excel_from_onedrive(
