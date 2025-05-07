@@ -136,8 +136,6 @@ def update_sku_master_unitprice_wrt_pallet(df):
             # update the rate (first)
             if mode != -1 and (update_soCal or update_oos):
                 new_df.iloc[row_idx, col_idx] = new_rate
-                if row_idx == 0:
-                    print(f"Update on {colname} with rate = {new_rate}")
             # prepare rate update
             elif (lower < pallet_quantity and upper > pallet_quantity) and mode != -1:
                 new_rate = rows[colname]

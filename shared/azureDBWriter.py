@@ -110,8 +110,8 @@ class AzureDBWriter():
                                         & ~(pd.isna(leftMergeDf.src_updt_dt_y))
                                     ]\
                     .drop(columns = ["_merge"], axis = 1)
-            print(f"[DEBUG] __trigger_upsert_df_wrt_azuredb INSERTION GETS {insertionDf.shape}\n")
-            print(f"[DEBUG] __trigger_upsert_df_wrt_azuredb UPDATE GETS {updateDf.shape}\n")
+            # print(f"[DEBUG] __trigger_upsert_df_wrt_azuredb INSERTION GETS {insertionDf.shape}\n")
+            # print(f"[DEBUG] __trigger_upsert_df_wrt_azuredb UPDATE GETS {updateDf.shape}\n")
 
             if insertionDf.shape[0] == 0:
                 self.myDf = pd.DataFrame()
@@ -299,10 +299,8 @@ class AzureDBWriter():
         # update unit price wrt pallet
         price_updt_df = update_sku_master_unitprice_wrt_pallet(df)
         price_updt_df.loc[:,'src_updt_dt'] = pd.to_datetime(price_updt_df.loc[:,'src_updt_dt'], format='mixed', errors= 'coerce').dt.date
-        print(f"[DEBUG] sku_master_dim_hst_preprocess Update Price:\n {price_updt_df.head(2)}\n")
         # convert to tabular form
         pivoted_df = pivot_sku_master_price_conds(price_updt_df)
-        print(f"[DEBUG] sku_master_dim_hst_preprocess Pivot df:\n {pivoted_df.head(2)}\n")
         self.myDf = pivoted_df
         
         # Transform pandas df w.r.t. azure ddl

@@ -49,7 +49,7 @@ class OneDriveFlatFileReader:
             # List all available drives (including personal OneDrive)
             response = requests.get(url, headers=headers, timeout=30)
             if response.status_code == 200:
-                print(f"\n{self.user_principal} exists with drive id = \'{response.json()['id']}\'\n")
+                # print(f"\n{self.user_principal} exists with drive id = \'{response.json()['id']}\'\n")
                 return response.json()["id"]
             elif response.status_code == 404:
                 raise Exception("OneDrive not found. It may not be provisioned yet.")
@@ -120,16 +120,16 @@ class OneDriveFlatFileReader:
                         sheet_name=sheet_name,
                         engine='openpyxl'
                     )
-                    print(f"[DEBUG] __url2df (xlsx) GETS {df.shape}\n")
+                    # print(f"[DEBUG] __url2df (xlsx) GETS {df.shape}\n")
                     return df
                 elif mode == 'csv':
                     df = pd.read_csv(
                         BinaryData, low_memory= False
                     )
-                    print(f"[DEBUG] __url2df (csv) GETS {df.shape}\n")
+                    # print(f"[DEBUG] __url2df (csv) GETS {df.shape}\n")
                     return df 
                 else: 
-                    print(f"[DEBUG] __url2df unsupported {mode}")
+                    # print(f"[DEBUG] __url2df unsupported {mode}")
                     return pd.DataFrame()
             else:       # download url not available (Not Exists / Time Constraint Not Satisfied)
                 return pd.DataFrame()
