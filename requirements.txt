@@ -7,8 +7,3 @@ sqlalchemy
 pyodbc
 pytz
 azure-functions==1.18.0
-re 
-datetime
-dotenv
-os
-io
