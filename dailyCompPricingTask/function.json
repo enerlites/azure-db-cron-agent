@@ -5,7 +5,7 @@
         "name": "dailyCompPricingCron",
         "type": "timerTrigger",
         "direction": "in",
-        "schedule": "0 0 23 * * *",
+        "schedule": "0 0 6 * * *",
         "runOnStartup": true,
         "useMonitor": true
       }
