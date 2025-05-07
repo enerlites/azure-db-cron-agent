@@ -130,7 +130,7 @@ class AzureDBWriter():
             # Return both insertionDf and updateDf
             return insertionDf, updateDf
         except SQLAlchemyError as sqlerr: 
-            self.logger.info(f"[DEBUG] comp_agent_web_preprocess GETS Azure DB err: {sqlerr}\n")
+            self.logger.info(f"[DEBUG] __trigger_upsert_df_wrt_azuredb GETS Azure DB err: {sqlerr}\n")
         finally:
             engine.dispose()
     
@@ -301,7 +301,7 @@ class AzureDBWriter():
                         'distr_typ': row['distr_typ']
                     })
         except SQLAlchemyError as sqlerr: 
-            self.logger.error(f"[DEBUG] comp_agent_web_preprocess GETS Azure DB err: {sqlerr}\n")
+            self.logger.error(f"[DEBUG] comp_agent_web_upsert_preprocess GETS Azure DB err: {sqlerr}\n")
         finally:
             engine.dispose()
 
