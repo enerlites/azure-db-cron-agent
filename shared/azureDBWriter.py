@@ -131,8 +131,8 @@ class AzureDBWriter():
                                         & ~(pd.isna(leftMergeDf.src_updt_dt_y))
                                     ]\
                     .drop(columns = ["_merge"], axis = 1)
-            # print(f"[DEBUG] __trigger_upsert_df_wrt_azuredb INSERTION GETS {insertionDf.shape}\n")
-            # print(f"[DEBUG] __trigger_upsert_df_wrt_azuredb UPDATE GETS {updateDf.shape}\n")
+            self.logger.info(f"[DEBUG] __trigger_upsert_df_wrt_azuredb INSERTION GETS {insertionDf.shape}\n")
+            self.logger.info(f"[DEBUG] __trigger_upsert_df_wrt_azuredb UPDATE GETS {updateDf.shape}\n")
 
             if insertionDf.shape[0] == 0:
                 self.myDf = pd.DataFrame()
