@@ -259,7 +259,7 @@ class AzureDBWriter():
         self.logger.info(f"[DEBUG] netsuite_items_sold_hst_preprocess (Azure empty) CLEANs df of shape {self.myDf.shape}\n")
 
     # Prepare records with pricing alerts 
-    # When competitor's pricing is 15% lower than EN Pricing 
+    # new insertion / update records --> triggers comparison 
     def get_pricing_alert_records (self, insertionDf, updateDf, skuQuery):
         pass
 
