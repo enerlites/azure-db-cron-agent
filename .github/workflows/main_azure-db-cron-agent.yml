@@ -1,3 +1,7 @@
+# Docs for the Azure Web Apps Deploy action: https://github.com/azure/functions-action
+# More GitHub Actions for Azure: https://github.com/Azure/actions
+# More info on Python, GitHub Actions, and Azure Functions: https://aka.ms/python-webapps-actions
+
 name: Build and deploy Python project to Azure Function App - azure-db-cron-agent
 
 on:
@@ -9,7 +13,6 @@ on:
 env:
   AZURE_FUNCTIONAPP_PACKAGE_PATH: '.' # set this to the path to your web app project, defaults to the repository root
   PYTHON_VERSION: '3.11' # set this to the python version to use (supports 3.6, 3.7, 3.8)
-  SCM_DO_BUILD_DURING_DEPLOYMENT: true # This ensures dependencies are installed during deployment
 
 jobs:
   build:
@@ -32,11 +35,7 @@ jobs:
           source venv/bin/activate
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          # Create .python_packages directory and install dependencies there
-          mkdir -p .python_packages/lib/site-packages
-          pip install -r requirements.txt --target .python_packages/lib/site-packages
+        run: pip install -r requirements.txt
 
       # Optional: Add step to run tests here
 
@@ -50,7 +49,6 @@ jobs:
           path: |
             release.zip
             !venv/
-            .python_packages/
 
   deploy:
     runs-on: ubuntu-latest
@@ -71,9 +69,9 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_E00130EE63364ADC95C3E62F873BF0D2 }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_6D8CEFF3599D46308532D16B0BFCA777 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_4A838706BD0E43FFBD12B60F492C16C3 }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_9772152AAC804D34ABBE4744BDC8184B }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_0E933E9B711C427D899C722E55BBDE13 }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_1185E5C657E64801833A51312DB5DB76 }}
 
       - name: 'Deploy to Azure Functions'
         uses: Azure/functions-action@v1
@@ -82,5 +80,4 @@ jobs:
           app-name: 'azure-db-cron-agent'
           slot-name: 'Production'
           package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_6F8CEFF3599D46308532D16B0BFCA777 }}
-          scm-do-build-during-deployment: true
+          
