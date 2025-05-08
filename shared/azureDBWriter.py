@@ -258,54 +258,6 @@ class AzureDBWriter():
             return 
         self.logger.info(f"[DEBUG] netsuite_items_sold_hst_preprocess (Azure empty) CLEANs df of shape {self.myDf.shape}\n")
 
-    # Prepare records with pricing alerts 
-    # new insertion / update records --> triggers comparison 
-    def __get_pricing_alert_records (self, insertionDf, updateDf, threshold):
-        stgDf = pd.concat([insertionDf, updateDf], axis = 0)
-        compPricing = stgDf[['release_dt','state_cd','mnf_stk_price','en_sku','comp_sku','mnf','distr_typ']]
-        # below is T-SQL query for most up-to-date internal price 
-        enSQLQuery = """
-        SELECT 
-            * 
-        FROM (
-            SELECT 
-                *, 
-                ROW_NUMBER() OVER(PARTITION BY model_no ORDER BY src_updt_dt DESC) AS idx
-            FROM (
-                SELECT DISTINCT 
-                    COALESCE(src_updt_dt, CAST('2000-01-01' AS DATE)) AS src_updt_dt,
-                    model_no, 
-                    cat, 
-                    prod_cd,
-                    unit_cost, 
-                    unit_price, 
-                    price_model
-                FROM landing.sku_master_dim_hst
-            ) A
-        ) B 
-        WHERE idx = 1;
-        """
-        if compPricing.empty:
-            return pd.DataFrame()
-        try:
-            engine = create_engine(self.DB_CONN, connect_args={"timeout": 30})
-            enPricing = pd.read_sql(enSQLQuery, engine)
-            # perform inner join 
-            mergeDf = pd.merge(enPricing, compPricing, left_on = 'model_no', right_on= 'en_sku', how ='inner')\
-                        .drop(columns=['model_no'], axis= 1)
-            # filter out records where price difference is above certain threshold
-            alertDf = mergeDf[
-                (mergeDf.unit_price - mergeDf.mnf_stk_price).abs() / mergeDf.unit_price >= threshold
-            ]
-            # subset and prepare for alert records
-            alertDf =  alertDf[['price_model', 'en_sku', 'comp_sku', 'mnf', 'distr_typ','release_dt', 'state_cd', 'unit_price', 'mnf_stk_price']]
-
-        except SQLAlchemyError as sqlerr: 
-            self.logger.error(f"[DEBUG] get_pricing_alert_records GETS Azure DB err: {sqlerr}\n")
-        finally:
-            engine.dispose()
-            self.logger.info(f"{alertDf.head(5)}")
-
     # Preprocess Competitor Agent Web xlsx file --> perform upsert on pandas dataframe and azure db
     # PK ~ ('release_dt','state_cd','en_sku','comp_sku','distr_typ')
     def comp_agent_web_upsert_preprocess(self):
@@ -355,9 +307,6 @@ class AzureDBWriter():
                         'distr_typ': row['distr_typ']
                     })
 
-            # below section for generating alert records
-            alertDf = self.__get_pricing_alert_records(insertionDf, updateDf, 0.10)
-            
         except SQLAlchemyError as sqlerr: 
             self.logger.error(f"[DEBUG] comp_agent_web_upsert_preprocess GETS Azure DB err: {sqlerr}\n")
         finally:
