@@ -1,17 +1,19 @@
 import os
 import pandas as pd
-from io import BytesIO
+import io
+import base64
+import requests
 from dotenv import load_dotenv
 from urllib.parse import quote
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 import urllib.parse
-import time 
 from datetime import datetime
 import pytz
 import re
 from shared.preprocessENPricing import *               # Internal SKU Pricing Related Preprocessing Funcs 
 import logging                                         # log errs in production env
+from shared.OneDriveFlatFileReader import *            # import class from shared module
 
 # DB class for Azure SQL db functions
 class AzureDBWriter():
@@ -263,9 +265,8 @@ class AzureDBWriter():
     
     # Prepare Pricing Alerts for Competitor Agent Web Entries
     # new insertion / update records --> Trigger this pricing alerts
-    def __get_pricing_alert_records (self, insertionDf, updateDf, threshold):
+    def __get_pricing_alerts (self, insertionDf, updateDf, threshold):
         stgDf = pd.concat([insertionDf, updateDf.iloc[:, :-1]], axis = 0)
-        print(f"After concatenation gets:\n{stgDf.columns.tolist()}\n")
         compPricing = stgDf[['release_dt','state_cd','mnf_stk_price','en_sku','comp_sku','mnf','distr_typ']]
 
         # below is T-SQL query for most up-to-date internal price 
@@ -290,28 +291,87 @@ class AzureDBWriter():
         ) B 
         WHERE idx = 1;
         """
-        if compPricing.empty:
-            return pd.DataFrame()
+        if compPricing.empty:           # No new competitor pricing records
+            return
         try:
             engine = create_engine(self.DB_CONN, connect_args={"timeout": 30})
             enPricing = pd.read_sql(enSQLQuery, engine)
-            print(f"EN Pricing of shape {enPricing.shape}\n")
             # perform inner join 
-            mergeDf = pd.merge(enPricing, compPricing, left_on = 'model_no', right_on= 'en_sku', how ='inner')\
-                        .drop(columns=['model_no'], axis= 1)
-            # filter out records where price difference is above certain threshold
-            alertDf = mergeDf[
-                (mergeDf.unit_price - mergeDf.mnf_stk_price).abs() / mergeDf.unit_price >= threshold
-            ]
-            # subset and prepare the alert records with 
-            alertDf =  alertDf[['price_model', 'en_sku', 'comp_sku', 'mnf', 'distr_typ','release_dt', 'state_cd', 'unit_price', 'mnf_stk_price']]
+            mergeDf = pd.merge(enPricing, compPricing, left_on = 'model_no', right_on= 'en_sku', how ='inner')
+            
+            # check if there is a matching records with EN internal item pricing catalog
+            if not mergeDf.empty:
+                mergeDf = mergeDf.drop(columns=['model_no'], axis=1, errors='ignore')
+
+                # filter out records where price difference is above certain threshold
+                alertDf = mergeDf[
+                    (mergeDf.unit_price - mergeDf.mnf_stk_price).abs() / mergeDf.unit_price >= threshold
+                ]
+                # subset and prepare the alert records with 
+                alertDf =  alertDf[['price_model', 'en_sku', 'comp_sku', 'mnf', 'distr_typ','release_dt', 'state_cd', 'unit_price', 'mnf_stk_price']]
+                self.logger.info(f"[DEBUG] __get_pricing_alerts with records of shape {alertDf.shape}\n")
+                
+                # Send out the email
+                if alertDf.shape[0] > 0:
+                    return alertDf
+                else: 
+                    return pd.DataFrame()
+
 
         except SQLAlchemyError as sqlerr: 
             self.logger.error(f"[DEBUG] get_pricing_alert_records GETS Azure DB err: {sqlerr}\n")
         finally:
             engine.dispose()
-            self.logger.info(f"[DEBUG] __get_pricing_alert_records GETS shape of {alertDf.shape}\n")
-            return alertDf
+    
+    # private functio to send out email to a recipient with given dataframe
+    # use msal api --> cast pandas to base64 excel + send over via graph api
+    def __auto_send_email(self, df, recipients = ['andrew.chen@enerlites.com']):
+        if df.empty: 
+            return 
+        
+        excel_io = io.BytesIO()
+        df.to_excel(excel_io, index=False, engine = 'openpyxl')
+        excel_io.seek(0)
+        excel_base64 = base64.b64encode(excel_io.read()).decode('utf-8')
+
+        myApp = OneDriveFlatFileReader('andrew.chen@enerlites.com')
+        ACCESSTOKEN = myApp._OneDriveFlatFileReader__get_access_token()
+        SENDER_EMAIL = 'andrew.chen@enerlites.com'
+        PAYLOAD = {
+            "message": {
+                "subject": "EN Competitor Pricing Alerts",
+                "body": {
+                    "contentType": "Text",
+                    "content": "Auto-generated latest SKU Pricing Alerts"
+                },
+                "toRecipients": [
+                    {
+                        "emailAddress": {
+                            "address": recipients[0]
+                        }
+                    }
+                ],
+                "attachments": [
+                    {
+                        "@odata.type": "#microsoft.graph.fileAttachment",
+                        "name": f"pricingAlerts_{datetime.now().date}.xlsx",
+                        "contentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        "contentBytes": excel_base64
+                    }
+                ]
+            },
+            "saveToSentItems": "true"
+        }
+
+        # Send the email using Microsoft Graph
+        send_url = "https://graph.microsoft.com/v1.0/users/andrew.chen@enerlites.com/sendMail"
+        headers = {'Authorization': f'Bearer {ACCESSTOKEN}','Content-Type': 'application/json'}
+        res = requests.post(send_url, headers= headers, json = PAYLOAD)
+        if res.status_code == 202:
+            self.logger.info(f'[AZURE] __auto_send_email SENT on {datetime.now()}\n')
+        else:
+            self.logger.error(f'[DEBUG] __auto_send_email ERR with {res.text}\n')
+
 
     # Preprocess Competitor Agent Web xlsx file --> perform upsert on pandas dataframe and azure db
     # PK ~ ('release_dt','state_cd','en_sku','comp_sku','distr_typ')
@@ -366,8 +426,9 @@ class AzureDBWriter():
             self.logger.error(f"[DEBUG] comp_agent_web_upsert_preprocess GETS Azure DB err: {sqlerr}\n")
         finally:
             engine.dispose()
-            # calling the pricing alerts at the end of this upsert logic
-            pricingAlerts = self.__get_pricing_alert_records(insertionDf, updateDf, 0.1)
+            # send alerts email if necessary
+            alertDf = self.__get_pricing_alerts(insertionDf, updateDf, 0.1)
+            self.__auto_send_email(alertDf)
             
 
     # Preprocess sku_master_dim_hst xlsx file --> perform upsert on pandas dataframe and azure db
