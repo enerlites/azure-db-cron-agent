@@ -114,7 +114,9 @@ class AzureDBWriter():
 
             leftMergeDf = src_df.merge(trg_df, on = PK_COLS, how = 'left', indicator = True)
             if "mnf_stk_price" in srcCols:
-                insertionDf = leftMergeDf[leftMergeDf['_merge'] == 'left_only'].drop(columns = ['_merge', 'mnf_stk_price_y'], axis = 1)
+                insertionDf = leftMergeDf[leftMergeDf['_merge'] == 'left_only']\
+                    .drop(columns = ['_merge', 'mnf_stk_price_y'], axis = 1)\
+                        .rename(columns= {"mnf_stk_price_x": "mnf_stk_price"})
                 # Update logic based on duplicate pk
                 updateDf = leftMergeDf[
                                         (leftMergeDf["_merge"] == "both") 
@@ -257,6 +259,58 @@ class AzureDBWriter():
             self.logger.info(f"[DEBUG] netsuite_items_sold_hst_preprocess (Memory Dedup) CLEANs df of shape {self.myDf.shape}\n")
             return 
         self.logger.info(f"[DEBUG] netsuite_items_sold_hst_preprocess (Azure empty) CLEANs df of shape {self.myDf.shape}\n")
+    
+    # Prepare Pricing Alerts for Competitor Agent Web Entries
+    # new insertion / update records --> Trigger this pricing alerts
+    def __get_pricing_alert_records (self, insertionDf, updateDf, threshold):
+        stgDf = pd.concat([insertionDf, updateDf.iloc[:, :-1]], axis = 0)
+        print(f"After concatenation gets:\n{stgDf.columns.tolist()}\n")
+        compPricing = stgDf[['release_dt','state_cd','mnf_stk_price','en_sku','comp_sku','mnf','distr_typ']]
+
+        # below is T-SQL query for most up-to-date internal price 
+        enSQLQuery = """
+        SELECT 
+            * 
+        FROM (
+            SELECT 
+                *, 
+                ROW_NUMBER() OVER(PARTITION BY model_no ORDER BY src_updt_dt DESC) AS idx
+            FROM (
+                SELECT DISTINCT 
+                    COALESCE(src_updt_dt, CAST('2000-01-01' AS DATE)) AS src_updt_dt,
+                    model_no, 
+                    cat, 
+                    prod_cd,
+                    unit_cost, 
+                    unit_price, 
+                    price_model
+                FROM landing.sku_master_dim_hst
+            ) A
+        ) B 
+        WHERE idx = 1;
+        """
+        if compPricing.empty:
+            return pd.DataFrame()
+        try:
+            engine = create_engine(self.DB_CONN, connect_args={"timeout": 30})
+            enPricing = pd.read_sql(enSQLQuery, engine)
+            print(f"EN Pricing of shape {enPricing.shape}\n")
+            # perform inner join 
+            mergeDf = pd.merge(enPricing, compPricing, left_on = 'model_no', right_on= 'en_sku', how ='inner')\
+                        .drop(columns=['model_no'], axis= 1)
+            # filter out records where price difference is above certain threshold
+            alertDf = mergeDf[
+                (mergeDf.unit_price - mergeDf.mnf_stk_price).abs() / mergeDf.unit_price >= threshold
+            ]
+            # subset and prepare the alert records with 
+            alertDf =  alertDf[['price_model', 'en_sku', 'comp_sku', 'mnf', 'distr_typ','release_dt', 'state_cd', 'unit_price', 'mnf_stk_price']]
+
+        except SQLAlchemyError as sqlerr: 
+            self.logger.error(f"[DEBUG] get_pricing_alert_records GETS Azure DB err: {sqlerr}\n")
+        finally:
+            engine.dispose()
+            self.logger.info(f"[DEBUG] __get_pricing_alert_records GETS shape of {alertDf.shape}\n")
+            return alertDf
 
     # Preprocess Competitor Agent Web xlsx file --> perform upsert on pandas dataframe and azure db
     # PK ~ ('release_dt','state_cd','en_sku','comp_sku','distr_typ')
@@ -311,6 +365,9 @@ class AzureDBWriter():
             self.logger.error(f"[DEBUG] comp_agent_web_upsert_preprocess GETS Azure DB err: {sqlerr}\n")
         finally:
             engine.dispose()
+            # calling the pricing alerts at the end of this upsert logic
+            pricingAlerts = self.__get_pricing_alert_records(insertionDf, updateDf, 0.1)
+            
 
     # Preprocess sku_master_dim_hst xlsx file --> perform upsert on pandas dataframe and azure db
     # PK ~ ('model_no','price_model','lower_bucket','upper_bucket')
@@ -381,8 +438,8 @@ class AzureDBWriter():
     
             df = self.myDf.copy()
             tableCols = self.myCols
-            # append getdate() datetim2 
-            df['cur_ts'] = pd.to_datetime('now')
+            # append local LA datetime as cur_ts field 
+            df['cur_ts'] = datetime.now(pytz.timezone('America/Los_Angeles'))
 
             # persist df name with that of defined in ssms   
             df.columns = tableCols
