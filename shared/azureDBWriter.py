@@ -162,6 +162,7 @@ class AzureDBWriter():
         dt_df = pd.DataFrame({"inv_eval_dt": [inv_eval_dt] * self.myDf.shape[0]})
         data = self.myDf.iloc[2:, :len(self.myCols) - 2]
         self.myDf = pd.concat([dt_df, data], axis = 1)
+        self.myDf = self.myDf.dropna(subset=self.myDf.columns.tolist()[4:8], how = 'all')
         numeric_cols = self.myDf.columns[6:-1]
         self.myDf[numeric_cols] = self.myDf[numeric_cols].astype('Int64')
 
