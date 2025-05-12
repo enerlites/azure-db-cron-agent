@@ -95,6 +95,10 @@ class AzureDBWriter():
             cleaned_df.loc[:,"quote_dt"] = pd.to_datetime(cleaned_df.quote_dt, format = "mixed", errors="coerce").dt.date
         if "quantity" in dfCols:
             cleaned_df.quantity = cleaned_df.quantity.astype(int)
+        if "customer" in dfCols:
+            cleaned_df.customer = cleaned_df.customer.apply(lambda x: " ".join(x.split(" ")[1:]) if isinstance(x, str) else x)
+            cleaned_df.customer = cleaned_df.customer.apply(lambda x: x.split(" : ",1)[1] 
+                                                            if isinstance(x, str) and " : " in x else x)
         # Deduplicate pandas in memory
         cleaned_df = cleaned_df.drop_duplicates(subset = PK_COLS, keep = 'last')
         self.myDf = cleaned_df
