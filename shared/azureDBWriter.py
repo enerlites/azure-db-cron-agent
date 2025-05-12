@@ -64,7 +64,8 @@ class AzureDBWriter():
                             else "OR" if x == "Oregon"
                             else "UT" if x == "Utah"
                             else "CR" if x == "Costa Rica"
-                            else x.upper()
+                            else x.upper() if isinstance(x,str)
+                            else x
                 )
         if "release_dt" in dfCols:
             cleaned_df.loc[:,"release_dt"] = pd.to_datetime(cleaned_df.release_dt, format = "mixed", errors="coerce").dt.date
@@ -201,9 +202,7 @@ class AzureDBWriter():
     
     def __items_sold_hst_clean(self):
         df = self.myDf.copy()
-        # drop bad records from netsuite
-        # (sku, bill_num, sys_dt) should never be null
-        df = df.dropna(subset=['sku','bill_num','sys_dt'])
+        itemSoldHstPK = ['bill_num','sys_dt', 'sku']
 
         # Transform records pulled from ERP
         df.sys_dt = df.sys_dt.apply(lambda x: x.replace(" am", "").replace(" pm", "") if isinstance(x, str) else x)
@@ -235,16 +234,15 @@ class AzureDBWriter():
                                         )
 
         # Aggregate by (bill_num, sys_dt, sku) --> for dedup logic
-        groupCols = ['bill_num', 'sys_dt', 'sku']
-        dedup_df = df.groupby(by=groupCols, as_index = False).agg(
+        dedup_df = df.groupby(by=itemSoldHstPK, as_index = False).agg(
             quantity=("quantity", "sum"),
             amt=("amt", "sum")
         )
 
         # Given that netsuite contain duplicates given (bill_num, sys_dt, sku)
-        new_df = pd.merge(dedup_df, df, on = groupCols, how="inner")\
+        new_df = pd.merge(dedup_df, df, on = itemSoldHstPK, how="inner")\
                         .drop(columns=["quantity_y", "amt_y"], axis = 1)\
-                        .rename(columns= {"quantity_x": "quantity", "amt_x": "amt"}).drop_duplicates(subset=groupCols)
+                        .rename(columns= {"quantity_x": "quantity", "amt_x": "amt"}).drop_duplicates(subset=itemSoldHstPK)
         # display(new_df.head(5))
         new_df = new_df[["customer","bill_num", "quote_num", "sys_dt"
                         , "sku", "quantity", "amt", "price_model", "prod_cd"
@@ -255,6 +253,7 @@ class AzureDBWriter():
         self.logger.info(f"[DEBUG] __items_sold_hst_clean PROCESSED df\n{df.shape}\n")
 
         self.myDf = new_df
+        self.__transform_df_wrt_azuredb(itemSoldHstPK)
 
     # Preprocess NetSuite csv files in Python Memory 
     # Dedup based on (bill_num, sys_dt, sku)
