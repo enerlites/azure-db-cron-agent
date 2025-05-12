@@ -90,6 +90,11 @@ class AzureDBWriter():
         if "promo_reason" in dfCols:
             cleaned_df.loc[:,"promo_reason"] = cleaned_df.loc[:,"promo_reason"].apply(lambda x: 'Discontinued' if x == 'Disontinued' else x)
 
+        # Below for erp_quote_hst_fct preprocessing 
+        if "quote_dt" in dfCols:
+            cleaned_df.loc[:,"quote_dt"] = pd.to_datetime(cleaned_df.quote_dt, format = "mixed", errors="coerce").dt.date
+        if "quantity" in dfCols:
+            cleaned_df.quantity = cleaned_df.quantity.astype(int)
         # Deduplicate pandas in memory
         cleaned_df = cleaned_df.drop_duplicates(subset = PK_COLS, keep = 'last')
         self.myDf = cleaned_df
@@ -110,11 +115,8 @@ class AzureDBWriter():
             if "src_updt_dt" in srcCols:
                 trg_df['src_updt_dt'] = pd.to_datetime(trg_df.src_updt_dt, format = "%Y-%m-%d", errors="coerce")
 
-            # Test Section Below (explore bad price Model)
-            # display(src_df.loc[src_df.model_no == "7701"])
-            # display(trg_df.loc[trg_df.model_no == "7701"])
-
             leftMergeDf = src_df.merge(trg_df, on = PK_COLS, how = 'left', indicator = True)
+            # update logic for en_comp_sku_fct table
             if "mnf_stk_price" in srcCols:
                 insertionDf = leftMergeDf[leftMergeDf['_merge'] == 'left_only']\
                     .drop(columns = ['_merge', 'mnf_stk_price_y'], axis = 1)\
@@ -126,6 +128,7 @@ class AzureDBWriter():
                                         & ~(pd.isna(leftMergeDf.mnf_stk_price_x))
                                     ]\
                     .drop(columns = ["_merge"], axis = 1)
+            # update logic for sku_master_dim_hst table
             elif "src_updt_dt" in srcCols:
                 insertionDf = leftMergeDf[leftMergeDf['_merge'] == 'left_only'].drop(columns = ['_merge', 'src_updt_dt_y'], axis = 1)
                 # Update logic based on duplicate pk
@@ -133,6 +136,16 @@ class AzureDBWriter():
                                         (leftMergeDf["_merge"] == "both") 
                                         & (leftMergeDf["src_updt_dt_x"] != leftMergeDf["src_updt_dt_y"])
                                         & ~(pd.isna(leftMergeDf.src_updt_dt_y))
+                                    ]\
+                    .drop(columns = ["_merge"], axis = 1)
+            # update logic for quote_hst_fct table
+            elif "row_stat" in srcCols:
+                insertionDf = leftMergeDf[leftMergeDf['_merge'] == 'left_only'].drop(columns = ['_merge', 'row_stat_y'], axis = 1)
+                # Update logic based on duplicate pk
+                updateDf = leftMergeDf[
+                                        (leftMergeDf["_merge"] == "both") 
+                                        & (leftMergeDf["row_stat_x"] != leftMergeDf["row_stat_y"])
+                                        & ~(pd.isna(leftMergeDf.row_stat_y))
                                     ]\
                     .drop(columns = ["_merge"], axis = 1)
             self.logger.info(f"[DEBUG] __trigger_upsert_df_wrt_azuredb INSERTION GETS {insertionDf.shape}\n")
@@ -262,6 +275,56 @@ class AzureDBWriter():
             self.logger.info(f"[DEBUG] netsuite_items_sold_hst_preprocess (Memory Dedup) CLEANs df of shape {self.myDf.shape}\n")
             return 
         self.logger.info(f"[DEBUG] netsuite_items_sold_hst_preprocess (Azure empty) CLEANs df of shape {self.myDf.shape}\n")
+
+    # Preprocess quotesByItemList csv file --> perform upsert on pandas dataframe and azure db
+    # PK ~ ('quote_num', 'model_no')
+    def netsuite_quoteByItem_preprocess(self):
+        PK_COLS = ['quote_num', 'model_no', 'price_model']
+
+        # Transform pandas df wrt database settings
+        self.__transform_df_wrt_azuredb(PK_COLS)
+        if self.myDf.empty:
+            return 
+
+        try:
+            # Insertion logic based on non-duplicate PK
+            engine = create_engine(self.DB_CONN, connect_args={"timeout": 30})
+            SQLQuery = "SELECT distinct quote_num, model_no, price_model, row_stat FROM landing.erp_quote_hst_fct;"
+            _, updateDf = self.__trigger_upsert_df_wrt_azuredb(SQLQuery, PK_COLS)
+            if updateDf.empty:
+                return 
+            update_ts = datetime.now(pytz.timezone('America/Los_Angeles'))
+            with engine.begin() as conn:  # Ensures commit/rollback
+                for _, row in updateDf.iterrows():
+                    # Use parameterized SQL to avoid SQL injection and type issues
+                    updt_stmt = text("""
+                        UPDATE landing.erp_quote_hst_fct 
+                        SET 
+                            quantity = :quantity,
+                            distr_typ = :distr_typ,
+                            trans_stat = :trans_stat,
+                            row_stat = :row_stat,
+                            data_dt = :data_dt
+                        WHERE
+                            model_no = :model_no
+                            AND price_model = :price_model
+                            AND quote_num = :quote_num;
+                    """)
+                    conn.execute(updt_stmt, {
+                        'quantity': None if pd.isna(row.get('quantity')) else row.get('quantity'),
+                        'distr_typ': None if pd.isna(row.get('distr_typ')) else row.get('distr_typ'),
+                        'trans_stat': None if pd.isna(row.get('trans_stat')) else row.get('trans_stat'),
+                        'row_stat': None if pd.isna(row.get('row_stat')) else row.get('row_stat'),
+                        'data_dt': update_ts,
+                        'model_no': row['model_no'],
+                        'price_model': row['price_model'],
+                        'quote_num': row['quote_num']
+                    })
+
+        except SQLAlchemyError as sqlerr: 
+            self.logger.error(f"[DEBUG] comp_agent_web_upsert_preprocess GETS Azure DB err: {sqlerr}\n")
+        finally:
+            engine.dispose()
     
     # Prepare Pricing Alerts for Competitor Agent Web Entries
     # new insertion / update records --> Trigger this pricing alerts
