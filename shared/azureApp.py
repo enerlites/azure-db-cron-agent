@@ -127,7 +127,7 @@ def monthly_netsuite_erp_job():
             "quote_num",
             "quote_dt",
             "trans_stat",
-            "descript",
+            "customer",
             "amt",
             "price_model",
             "row_stat",
