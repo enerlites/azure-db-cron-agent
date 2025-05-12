@@ -9,6 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime
 import pytz
 import re
+import json
 
 # OneDrive class for all oneDrive functionalities
 class OneDriveFlatFileReader:
@@ -80,8 +81,8 @@ class OneDriveFlatFileReader:
                 if item['name'] == folderName:          # return specified folder id
                     # print(f"\n{folderName} folder found in OneDrive !\n")
                     folderId = item["id"]
-                    FileURL = f"{oneDriveBaseURL}/items/{folderId}/children"
-                    res = requests.get(FileURL, headers = headers, timeout= 30)
+                    FolderURL = f"{oneDriveBaseURL}/items/{folderId}/children"
+                    res = requests.get(FolderURL, headers = headers, timeout= 30)
                     fileItems = res.json().get('value', [])
                     
                     for file in fileItems:
@@ -150,11 +151,16 @@ class OneDriveFlatFileReader:
             raise Exception(f"{str(e)}")
     
     '''
-    Grab a list of ms downloadable url within time eval level (4th argument)
-        eg. when time_eval_level = 'month'          --> generate file download urls only when a file is modified in current month
-                 time_eval_level = 'day'            --> generate file download urls only when a file is modified on current day
+    Grab a list of ms downloadable url within time eval level (5th argument)
+        eg. 
+        5th arg:
+        when time_eval_level = 'month'          --> generate file download urls only when a file is modified in current month
+             time_eval_level = 'day'            --> generate file download urls only when a file is modified on current day
+        
+        4th arg:
+        when subFolderName = 'quotes'           --> Read any `quotesByItemList` csv files from netsuite 
     '''
-    def __get_multi_files_dw_urls (self, access_token, driver_id, folderName, time_eval_level = None):
+    def __get_multi_files_dw_urls (self, access_token, driver_id, folderName, subFolderName = None, time_eval_level = None):
         oneDriveBaseURL = f"{self.base_graph_url}/drives/{driver_id}"
         FolderURL = f"{oneDriveBaseURL}/root/children"
         headers = {"Authorization": f"Bearer {access_token}"}
@@ -173,35 +179,38 @@ class OneDriveFlatFileReader:
             for item in items:
                 if item['name'] == folderName:          # return specified folder id
                     folderId = item["id"]
-                    FileURL = f"{oneDriveBaseURL}/items/{folderId}/children"
-                    res = requests.get(FileURL, headers = headers, timeout= 30)
-                    fileItems = res.json().get('value', []) 
-                    
-                    # Iterate over files
-                    for file in fileItems:
-                        modified_ts = datetime.strptime(file['lastModifiedDateTime'], "%Y-%m-%dT%H:%M:%SZ")
-                        modified_y, modified_m, modified_d = modified_ts.year, modified_ts.month, modified_ts.day
-                        # check monthly basis
-                        if local_year == modified_y and local_month == modified_m and time_eval_level == 'month':
-                            print(f"[DEBUG] __get_multi_files_dw_urls GETS \'{file['name']}\'\n")
-                            dwFileUrls.append(file["@microsoft.graph.downloadUrl"])
-                        
-                        # check daily basis
-                        elif local_year == modified_y and local_month == modified_m and local_day == modified_d and time_eval_level == 'day':
-                            print(f"[DEBUG] __get_multi_files_dw_urls GETS \'{file['name']}\'\n")
-                            dwFileUrls.append(file["@microsoft.graph.downloadUrl"])
-                        
+                    FolderURL = f"{oneDriveBaseURL}/items/{folderId}/children"
+                    res = requests.get(FolderURL, headers = headers, timeout= 30)
+                    folderItems = res.json().get('value', []) 
+
+                    # Iterate over subfolders of a folder
+                    for folderItem in folderItems:
+                        if folderItem['name'] == subFolderName:         # find this subfolder name
+                            subFolderURL = f"{oneDriveBaseURL}/items/{folderItem['id']}/children"
+                            print(f"subfolder req URL: {subFolderURL}\n")
+                            subFolderRes = requests.get(subFolderURL, headers = headers, timeout= 30)
+                            subFolderItems = subFolderRes.json().get('value', []) 
+                            # iterate over items of the subfolder
+                            for item in subFolderItems:
+                                mod_ts = datetime.strptime(item["lastModifiedDateTime"],"%Y-%m-%dT%H:%M:%SZ")\
+                                    .replace(tzinfo=pytz.utc).astimezone(pytz.timezone("America/Los_Angeles"))
+                                mod_y, mod_m, mod_d = mod_ts.year, mod_ts.month, mod_ts.day
+                                if time_eval_level == 'month' and local_year == mod_y and local_month == mod_m:
+                                    dwFileUrls.append(item["@microsoft.graph.downloadUrl"])
+                                elif time_eval_level == 'day' and local_year == mod_y and local_month == mod_m and local_day == mod_d:
+                                    dwFileUrls.append(item["@microsoft.graph.downloadUrl"])
+            print(f"[DEBUG] __get_multi_files_dw_urls GETS {len(dwFileUrls)} csv files from {subFolderName}\n")          
             return dwFileUrls
 
         except requests.exceptions.RequestException as e:
             print(f"Error searching for folder/file: {str(e)}")
-            return None
+            return []
 
-    def read_csv_from_oneDrive(self, folderName, time_eval_level = 'month'):
+    def read_csv_from_oneDrive(self, folderName, subFolderName = None, time_eval_level = 'month'):
         try:
             access_token = self.__get_access_token()
             drive_id = self.__get_drive_id(access_token)
-            download_urls = self.__get_multi_files_dw_urls(access_token,drive_id,folderName, time_eval_level)
+            download_urls = self.__get_multi_files_dw_urls(access_token,drive_id,folderName, subFolderName, time_eval_level)
             dfs = [self.__url2df(url, access_token, mode='csv') for url in download_urls]
             return dfs
 

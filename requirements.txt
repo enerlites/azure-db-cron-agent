@@ -1,9 +1,16 @@
 msal
 requests
 pandas
+numpy
 openpyxl
 python-dotenv
 sqlalchemy
 pyodbc
 pytz
 azure-functions==1.18.0
+
+# modelling packages
+sklearn
+scipy
+k_means_constrained
+xgboost

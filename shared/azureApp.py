@@ -87,7 +87,7 @@ def monthly_promotion_brochure_job():
         oceanAirInv_db = AzureDBWriter(oceanAirInv_df,oceanAirInvCols)
         oceanAirInv_db.oceanAir_Inv_preprocess()
         oceanAirInv_db.flatFile2db('landing', 'googleDrive_ocean_air_inv_fct')
-                
+
     except Exception as e:
         print(f"{str(e)}")    
 
@@ -96,9 +96,10 @@ def monthly_netsuite_erp_job():
     try:
         # init an oneDrive account
         oneDriveReader = OneDriveFlatFileReader("andrew.chen@enerlites.com")
-        ns_erp_dfs = oneDriveReader.read_csv_from_oneDrive("NetSuite ERP", "month") 
+        ns_itemSold_dfs = oneDriveReader.read_csv_from_oneDrive("NetSuite ERP", "itemsSoldHistory", "month") 
+        ns_quote_dfs = oneDriveReader.read_csv_from_oneDrive("NetSuite ERP", "quotesByItemList", "month")
 
-        # define ddl fields
+        # define items_sold_history ddl 
         erp_items_sold_history_cols = [
             "customer",
             "bill_num",
@@ -118,11 +119,33 @@ def monthly_netsuite_erp_job():
             "data_dt"
         ]
 
+        # Define quote_hst_fct ddl 
+        erp_quote_hst_fct_cols = [
+            "model_no",
+            "quantity",
+            "distr_typ",
+            "quote_num",
+            "quote_dt",
+            "trans_stat",
+            "descript",
+            "amt",
+            "price_model",
+            "row_stat",
+            "ship2addr",
+            "data_dt"
+        ]
+       
         # for each netsuite erp df --> call preprocess --> write2db
-        for ns_df in ns_erp_dfs:
+        for ns_df in ns_itemSold_dfs:
             nsWriter = AzureDBWriter(ns_df, erp_items_sold_history_cols)
             nsWriter.netsuite_items_sold_hst_preprocess()
             nsWriter.flatFile2db('landing','erp_items_sold_history')
+        
+        # for each quote erp df --> call preprocess --> write2 db
+        for quote_df in ns_quote_dfs:
+            nsWriter = AzureDBWriter(quote_df, erp_quote_hst_fct_cols)
+            nsWriter.netsuite_quoteByItem_preprocess()
+            nsWriter.flatFile2db('landing','erp_quote_hst_fct')
 
     except Exception as e:
         print(f"{str(e)}")
