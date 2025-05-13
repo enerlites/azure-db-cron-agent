@@ -131,7 +131,7 @@ def monthly_netsuite_erp_job():
             "amt",
             "price_model",
             "row_stat",
-            "ship2addr",
+            "state_cd",
             "data_dt"
         ]
        
