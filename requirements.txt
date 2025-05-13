@@ -10,7 +10,7 @@ pytz
 azure-functions==1.18.0
 
 # modelling packages
-sklearn
+scikit-learn
 scipy
 k_means_constrained
 xgboost
