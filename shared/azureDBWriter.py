@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+import numpy as np
 import io
 import base64
 import requests
@@ -95,7 +96,7 @@ class AzureDBWriter():
         if "quote_dt" in dfCols:
             cleaned_df.loc[:,"quote_dt"] = pd.to_datetime(cleaned_df.quote_dt, format = "mixed", errors="coerce").dt.date
         if "quantity" in dfCols:
-            cleaned_df.quantity = cleaned_df.quantity.astype(int)
+            cleaned_df.quantity = cleaned_df.quantity.astype('Int64')           # Int64 accept Null values in Python 
         if "customer" in dfCols:
             cleaned_df.customer = cleaned_df.customer.apply(lambda x: " ".join(x.split(" ")[1:]) if isinstance(x, str) else x)
             cleaned_df.customer = cleaned_df.customer.apply(lambda x: x.split(" : ",1)[1] 
@@ -358,7 +359,7 @@ class AzureDBWriter():
         WHERE idx = 1;
         """
         if compPricing.empty:           # No new competitor pricing records
-            return
+            return pd.DataFrame()
         try:
             engine = create_engine(self.DB_CONN, connect_args={"timeout": 30})
             enPricing = pd.read_sql(enSQLQuery, engine)
@@ -368,59 +369,60 @@ class AzureDBWriter():
             # check if there is a matching records with EN internal item pricing catalog
             if not mergeDf.empty:
                 mergeDf = mergeDf.drop(columns=['model_no'], axis=1, errors='ignore')
+                mergeDf.loc[:,"priceVar"] = (mergeDf.unit_price - mergeDf.mnf_stk_price).abs() / mergeDf.unit_price.replace(0, np.nan)
+                mergeDf = mergeDf.dropna(subset = ['priceVar'])
 
                 # filter out records where price difference is above certain threshold
-                alertDf = mergeDf[
-                    (mergeDf.unit_price - mergeDf.mnf_stk_price).abs() / mergeDf.unit_price >= threshold
-                ]
+                alertDf = mergeDf.loc[mergeDf.priceVar >= threshold, :]
+                alertDf.priceVar = alertDf.priceVar.apply(lambda x: str(round(x*100,1)) + "%")
+
                 # subset and prepare the alert records with 
-                alertDf =  alertDf[['price_model', 'en_sku', 'comp_sku', 'mnf', 'distr_typ','release_dt', 'state_cd', 'unit_price', 'mnf_stk_price']]
-                self.logger.info(f"[DEBUG] __get_pricing_alerts with records of shape {alertDf.shape}\n")
+                alertDf = alertDf[['price_model', 'en_sku', 'comp_sku', 'mnf', 'unit_price', 'mnf_stk_price', 'priceVar','distr_typ','release_dt', 'state_cd']]
+                alertDf.columns = ['Price Model', "EN Model No", "Competitor Model No","Manufacturer","EN Price", "Competitor Price", "Price Variance Ratio", "Channel", "Competitor Release Date", "State"]
+                print(f"[DEBUG] __get_pricing_alerts with records of shape {alertDf.shape}\n")
                 
-                # Send out the email
-                if alertDf.shape[0] > 0:
-                    return alertDf
-                else: 
-                    return pd.DataFrame()
+                return alertDf
+            else: 
+                return pd.DataFrame()
 
 
         except SQLAlchemyError as sqlerr: 
             self.logger.error(f"[DEBUG] get_pricing_alert_records GETS Azure DB err: {sqlerr}\n")
+            print(f"[DEBUG] get_pricing_alert_records GETS Azure DB err: {sqlerr}\n")
         finally:
             engine.dispose()
     
-    # private functio to send out email to a recipient with given dataframe
+    # private function to send out email to a recipient with given dataframe
     # use msal api --> cast pandas to base64 excel + send over via graph api
-    def __auto_send_email(self, df, recipients = ['andrew.chen@enerlites.com']):
-        if df.empty: 
+    def __auto_send_email(self, outputDf, emailSubject, sender = 'andrew.chen@enerlites.com', recipients = ['andrew.chen@enerlites.com']):
+        if outputDf.empty: 
             return 
-        
+
+        # Create Excel as base64
         excel_io = io.BytesIO()
-        df.to_excel(excel_io, index=False, engine = 'openpyxl')
+        outputDf.to_excel(excel_io, index=False, engine = 'openpyxl')
         excel_io.seek(0)
         excel_base64 = base64.b64encode(excel_io.read()).decode('utf-8')
 
-        myApp = OneDriveFlatFileReader('andrew.chen@enerlites.com')
+        myApp = OneDriveFlatFileReader(sender)
         ACCESSTOKEN = myApp._OneDriveFlatFileReader__get_access_token()
-        SENDER_EMAIL = 'andrew.chen@enerlites.com'
+
+        LIST_OF_RECEPTS = [{"emailAddress": {"address": r}} for r in recipients]
+        EXCEL_NAME = f"{emailSubject} ({datetime.now().strftime('%Y-%m-%d')}).xlsx"
+
+        # build email payload 
         PAYLOAD = {
             "message": {
-                "subject": "EN Competitor Pricing Alerts",
+                "subject": emailSubject,
                 "body": {
                     "contentType": "Text",
-                    "content": "Auto-generated latest SKU Pricing Alerts"
+                    "content": f"Hi Teams,\n\nPlease feel free to view the attached excel sheet.\n\nWarm Regards,\n{sender.split('@enerlites')[0]}"
                 },
-                "toRecipients": [
-                    {
-                        "emailAddress": {
-                            "address": recipients[0]
-                        }
-                    }
-                ],
+                "toRecipients": LIST_OF_RECEPTS,
                 "attachments": [
                     {
                         "@odata.type": "#microsoft.graph.fileAttachment",
-                        "name": f"pricingAlerts_{datetime.now().date}.xlsx",
+                        "name": f"{EXCEL_NAME}",
                         "contentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         "contentBytes": excel_base64
                     }
@@ -430,13 +432,21 @@ class AzureDBWriter():
         }
 
         # Send the email using Microsoft Graph
-        send_url = "https://graph.microsoft.com/v1.0/users/andrew.chen@enerlites.com/sendMail"
-        headers = {'Authorization': f'Bearer {ACCESSTOKEN}','Content-Type': 'application/json'}
-        res = requests.post(send_url, headers= headers, json = PAYLOAD)
-        if res.status_code == 202:
-            self.logger.info(f'[AZURE] __auto_send_email SENT on {datetime.now()}\n')
-        else:
-            self.logger.error(f'[DEBUG] __auto_send_email ERR with {res.text}\n')
+        try:
+            headers = {
+                'Authorization': f'Bearer {ACCESSTOKEN}',
+                'Content-Type': 'application/json'
+            }
+            send_url = f"https://graph.microsoft.com/v1.0/users/{sender}/sendMail"
+            res = requests.post(send_url, headers=headers, json=PAYLOAD)
+
+            if res.status_code == 202:
+                self.logger.info(f'[AZURE] __auto_send_email SENT 2 {recipients} on {datetime.now()}')
+            else:
+                self.logger.error(f'[AZURE] __auto_send_email FAILED with: {res.status_code} - {res.text}')
+
+        except Exception as e:
+            self.logger.error(f'[AZURE] __auto_send_email EXCEPTION: {e}')
 
 
     # Preprocess Competitor Agent Web xlsx file --> perform upsert on pandas dataframe and azure db
@@ -494,7 +504,8 @@ class AzureDBWriter():
             engine.dispose()
             # send alerts email if necessary
             alertDf = self.__get_pricing_alerts(insertionDf, updateDf, 0.1)
-            self.__auto_send_email(alertDf)
+            # test to only send to andrew.chen@enerlites.com
+            self.__auto_send_email(outputDf=alertDf,emailSubject="Competitor Pricing Alerts")
             
 
     # Preprocess sku_master_dim_hst xlsx file --> perform upsert on pandas dataframe and azure db
