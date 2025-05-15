@@ -504,14 +504,9 @@ class AzureDBWriter():
             engine.dispose()
             # send alerts email if necessary
             alertDf = self.__get_pricing_alerts(insertionDf, updateDf, 0.1)
-<<<<<<< HEAD
 
-            # uncomment this auto_send_email (waiting for admin permission)
-            # self.__auto_send_email(alertDf)
-=======
             # test to only send to andrew.chen@enerlites.com
             self.__auto_send_email(outputDf=alertDf,emailSubject="Competitor Pricing Alerts")
->>>>>>> dev1
             
 
     # Preprocess sku_master_dim_hst xlsx file --> perform upsert on pandas dataframe and azure db
