@@ -396,7 +396,7 @@ class AzureDBWriter():
     # func that send email with multi attachment to list of recipients
     # outputDfs       --> list of attachments to be converted to base64
     # attachmentNames --> name of attachments
-    def auto_send_email(self, outputDfs, attachmentNames, emailSubject, sender = 'andrew.chen@enerlites.com', recipients = ['andrew.chen@enerlites.com']):
+    def auto_send_email(self, outputDfs, attachmentNames, emailSubject, sender = 'andrew.chen@enerlites.com', recipients = ['andrew.chen@enerlites.com','angel@Enerlites.com']):
         if all(df.empty for df in outputDfs): 
             return 
 
@@ -513,8 +513,8 @@ class AzureDBWriter():
             alertDf = self.__get_pricing_alerts(insertionDf, updateDf, 0.1)
 
             # test to only send to andrew.chen@enerlites.com
-            attName = f"{datetime.now().strftime('%Y-%m-%d')} Pricing Alerts)"
-            self.auto_send_email(outputDfs=[alertDf],emailSubject="Competitor Pricing Alerts", attachmentNames=[attName])
+            attName = f"{datetime.now().strftime('%Y-%m-%d')} Pricing Alerts"
+            self.auto_send_email(outputDfs=[alertDf],emailSubject="Competitor Pricing Alerts [NO-REPLY]", attachmentNames=[attName])
             
 
     # Preprocess sku_master_dim_hst xlsx file --> perform upsert on pandas dataframe and azure db
