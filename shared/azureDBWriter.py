@@ -335,7 +335,7 @@ class AzureDBWriter():
     # new insertion / update records --> Trigger this pricing alerts
     def __get_pricing_alerts (self, insertionDf, updateDf, threshold):
         stgDf = pd.concat([insertionDf, updateDf.iloc[:, :-1]], axis = 0)
-        compPricing = stgDf[['release_dt','state_cd','mnf_stk_price','en_sku','comp_sku','mnf','distr_typ']]
+        compPricing = stgDf[['release_dt','state_cd','mnf_stk_price','en_sku','comp_sku','mnf','distr_typ', 'rep_name']]
 
         # below is T-SQL query for most up-to-date internal price 
         enSQLQuery = """
@@ -378,8 +378,8 @@ class AzureDBWriter():
                 alertDf.priceVar = alertDf.priceVar.apply(lambda x: str(round(x*100,1)) + "%")
 
                 # subset and prepare the alert records with 
-                alertDf = alertDf[['price_model', 'en_sku', 'comp_sku', 'mnf', 'unit_price', 'mnf_stk_price', 'priceVar','distr_typ','release_dt', 'state_cd']]
-                alertDf.columns = ['Price Model', "EN Model No", "Competitor Model No","Manufacturer","EN Price", "Competitor Price", "Price Variance Ratio", "Channel", "Competitor Release Date", "State"]
+                alertDf = alertDf[['price_model', 'en_sku', 'comp_sku', 'mnf', 'unit_price', 'mnf_stk_price', 'priceVar','distr_typ','release_dt', 'state_cd', 'rep_name']]
+                alertDf.columns = ['Price Model', "EN Model No", "Competitor Model No","Manufacturer","EN Price", "Competitor Price", "Price Variance Ratio", "Channel", "Competitor Release Date", "State", "Rep Name"]
                 print(f"[DEBUG] __get_pricing_alerts with records of shape {alertDf.shape}\n")
                 
                 return alertDf
