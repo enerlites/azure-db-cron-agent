@@ -1,6 +1,6 @@
 import logging
 import azure.functions as func
-from ..shared.azureApp import monthly_promotion_brochure_job
+from shared import *
 
 def main(monthlyPromoCron: func.TimerRequest) -> None:
     logging.info("Running: monthly_promotion_brochure_job()")

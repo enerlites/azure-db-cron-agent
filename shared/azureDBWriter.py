@@ -96,7 +96,8 @@ class AzureDBWriter():
         if "quote_dt" in dfCols:
             cleaned_df.loc[:,"quote_dt"] = pd.to_datetime(cleaned_df.quote_dt, format = "mixed", errors="coerce").dt.date
         if "quantity" in dfCols:
-            cleaned_df.quantity = cleaned_df.quantity.astype('Int64')           # Int64 accept Null values in Python 
+            cleaned_df.quantity = cleaned_df.quantity.apply(lambda val: round(val,0) if not pd.isna(val) else val)
+            cleaned_df.quantity = cleaned_df['quantity'].astype('Int64')           # Int64 accept Null values in Python 
         if "customer" in dfCols:
             cleaned_df.customer = cleaned_df.customer.apply(lambda x: " ".join(x.split(" ")[1:]) if isinstance(x, str) else x)
             cleaned_df.customer = cleaned_df.customer.apply(lambda x: x.split(" : ",1)[1] 
@@ -392,23 +393,36 @@ class AzureDBWriter():
         finally:
             engine.dispose()
     
-    # private function to send out email to a recipient with given dataframe
-    # use msal api --> cast pandas to base64 excel + send over via graph api
-    def __auto_send_email(self, outputDf, emailSubject, sender = 'andrew.chen@enerlites.com', recipients = ['andrew.chen@enerlites.com']):
-        if outputDf.empty: 
+    # func that send email with multi attachment to list of recipients
+    # outputDfs       --> list of attachments to be converted to base64
+    # attachmentNames --> name of attachments
+    def auto_send_email(self, outputDfs, attachmentNames, emailSubject, sender = 'andrew.chen@enerlites.com', recipients = ['andrew.chen@enerlites.com']):
+        if all(df.empty for df in outputDfs): 
             return 
 
-        # Create Excel as base64
-        excel_io = io.BytesIO()
-        outputDf.to_excel(excel_io, index=False, engine = 'openpyxl')
-        excel_io.seek(0)
-        excel_base64 = base64.b64encode(excel_io.read()).decode('utf-8')
+        ATTCHMENTS = []
+        for idx, df in enumerate(outputDfs):
+            if df.empty:
+                continue 
+
+            # Create Excel as base64
+            excel_io = io.BytesIO()
+            df.to_excel(excel_io, index=False, engine = 'openpyxl')
+            excel_io.seek(0)
+            excel_base64 = base64.b64encode(excel_io.read()).decode('utf-8')
+            
+            # append to attchment
+            ATTCHMENTS.append({
+                        "@odata.type": "#microsoft.graph.fileAttachment",
+                        "name": f"{attachmentNames[idx]}",
+                        "contentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        "contentBytes": excel_base64
+                    })
 
         myApp = OneDriveFlatFileReader(sender)
         ACCESSTOKEN = myApp._OneDriveFlatFileReader__get_access_token()
 
         LIST_OF_RECEPTS = [{"emailAddress": {"address": r}} for r in recipients]
-        EXCEL_NAME = f"{emailSubject} ({datetime.now().strftime('%Y-%m-%d')}).xlsx"
 
         # build email payload 
         PAYLOAD = {
@@ -419,14 +433,7 @@ class AzureDBWriter():
                     "content": f"Hi Teams,\n\nPlease feel free to view the attached excel sheet.\n\nWarm Regards,\n{sender.split('@enerlites')[0]}"
                 },
                 "toRecipients": LIST_OF_RECEPTS,
-                "attachments": [
-                    {
-                        "@odata.type": "#microsoft.graph.fileAttachment",
-                        "name": f"{EXCEL_NAME}",
-                        "contentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        "contentBytes": excel_base64
-                    }
-                ]
+                "attachments": ATTCHMENTS
             },
             "saveToSentItems": "true"
         }
@@ -441,12 +448,12 @@ class AzureDBWriter():
             res = requests.post(send_url, headers=headers, json=PAYLOAD)
 
             if res.status_code == 202:
-                self.logger.info(f'[AZURE] __auto_send_email SENT 2 {recipients} on {datetime.now()}')
+                self.logger.info(f'[AZURE] auto_send_email SENT 2 {recipients} on {datetime.now()}')
             else:
-                self.logger.error(f'[AZURE] __auto_send_email FAILED with: {res.status_code} - {res.text}')
+                self.logger.error(f'[AZURE] auto_send_email FAILED with: {res.status_code} - {res.text}')
 
         except Exception as e:
-            self.logger.error(f'[AZURE] __auto_send_email EXCEPTION: {e}')
+            self.logger.error(f'[AZURE] auto_send_email EXCEPTION: {e}')
 
 
     # Preprocess Competitor Agent Web xlsx file --> perform upsert on pandas dataframe and azure db
@@ -506,7 +513,8 @@ class AzureDBWriter():
             alertDf = self.__get_pricing_alerts(insertionDf, updateDf, 0.1)
 
             # test to only send to andrew.chen@enerlites.com
-            self.__auto_send_email(outputDf=alertDf,emailSubject="Competitor Pricing Alerts")
+            attName = f"{datetime.now().strftime('%Y-%m-%d')} Pricing Alerts)"
+            self.auto_send_email(outputDfs=[alertDf],emailSubject="Competitor Pricing Alerts", attachmentNames=[attName])
             
 
     # Preprocess sku_master_dim_hst xlsx file --> perform upsert on pandas dataframe and azure db

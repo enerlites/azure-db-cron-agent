@@ -1,6 +1,6 @@
 import logging
 import azure.functions as func
-from ..modelling.custTier import *
+from modelling import *
 
 # define the Annual Customer Segmentation Clustering Task
 def main(annualCustSegTask: func.TimerRequest) -> None:

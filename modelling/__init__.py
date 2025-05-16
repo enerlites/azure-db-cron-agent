@@ -1,2 +1,2 @@
-from modelling.custTier import *
-from modelling.demandForcast import * 
+from .custTier import *
+from .demandForcast import * 

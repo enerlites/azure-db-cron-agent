@@ -187,7 +187,6 @@ class OneDriveFlatFileReader:
                     for folderItem in folderItems:
                         if folderItem['name'] == subFolderName:         # find this subfolder name
                             subFolderURL = f"{oneDriveBaseURL}/items/{folderItem['id']}/children"
-                            print(f"subfolder req URL: {subFolderURL}\n")
                             subFolderRes = requests.get(subFolderURL, headers = headers, timeout= 30)
                             subFolderItems = subFolderRes.json().get('value', []) 
                             # iterate over items of the subfolder

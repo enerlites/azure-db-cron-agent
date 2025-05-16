@@ -38,6 +38,7 @@ from k_means_constrained import KMeansConstrained           # use constrained k-
 import re
 import urllib
 import logging
+from shared.azureDBWriter import *                          # import packages and modules
 
 class CustTierClustering:
     # Read model input table from Azure db to Python Memory
@@ -325,6 +326,12 @@ class CustTierClustering:
         self.loadModelResBack2DB(gmm_custTier_df, "modeling", "gmm_custTier_output")
         # load gmm profile back to db
         self.loadModelResBack2DB(gmm_profile_df, "modeling", "gmm_custTier_profile_statistics")
+
+        # Send all model result as attachments in 1 email
+        attDfs = [kmeans_custTier_df,kmeans_profile_df,gmm_custTier_df,gmm_profile_df]
+        attNames = ['Customer Tier Classificiation (K-means).xlsx','Customer Tier Profile (K-means).xlsx','Customer Tier Classificiation (GMM).xlsx','Customer Tier Profile (GMM).xlsx']
+        myDBWriter = AzureDBWriter(None, None)
+        myDBWriter.auto_send_email(outputDfs=attDfs, attachmentNames=attNames, emailSubject="Annual Cust Tier NO-REPLY")
 
 # Testing Section Below for this module
 if __name__ == "__main__":
