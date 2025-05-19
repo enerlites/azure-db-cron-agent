@@ -2,11 +2,11 @@
     "scriptFile": "__init__.py",
     "bindings": [
       {
-        "name": "annualCustSegTask",
+        "name": "monthlyCustSegTask",
         "type": "timerTrigger",
         "direction": "in",
         "schedule": "0 0 7 21 * *",
-        "runOnStartup": true,
+        "runOnStartup": false,
         "useMonitor": true
       }
     ]

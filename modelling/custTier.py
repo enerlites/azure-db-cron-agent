@@ -301,7 +301,7 @@ class CustTierClustering:
         return tier_profile                             # Return profile statistics dataframe
 
     # wrong this func for everything
-    def annual_customer_segmentation(self):
+    def monthly_customer_segmentation(self):
         # train kmeans
         kmeans_custTier_df, kmeans_custTier_lookup = self.k_means_fine_tune()
         kmeans_profile_df = self.depict_tier_profile(kmeans_custTier_lookup)
@@ -339,5 +339,5 @@ class CustTierClustering:
 if __name__ == "__main__":
     pass
     # myClustering = CustTierClustering()
-    # myClustering.annual_customer_segmentation()
+    # myClustering.monthly_customer_segmentation()
 
