@@ -58,6 +58,8 @@ class CustTierClustering:
         self.AZ_ENGINE = create_engine(self.DB_CONN)
         self.SQLQuery = 'SELECT * FROM modeling.customer_tier_input;'
         with self.AZ_ENGINE.connect() as conn:
+            conn.execution_options(isolation_level="AUTOCOMMIT")\
+                .execute(text("EXEC modeling.sp_custTierInput;"))   # execute the T-SQL procedure before input table load
             self.inputDf = pd.read_sql(self.SQLQuery, conn)         # store modeling input (read from db)
 
         # set up class level logger in Azure Prod env

@@ -5,7 +5,7 @@
         "name": "annualCustSegTask",
         "type": "timerTrigger",
         "direction": "in",
-        "schedule": "0 0 5 25 12 *",
+        "schedule": "0 0 7 21 * *",
         "runOnStartup": true,
         "useMonitor": true
       }
