@@ -333,7 +333,7 @@ class CustTierClustering:
         attDfs = [kmeans_custTier_df,kmeans_profile_df,gmm_custTier_df,gmm_profile_df]
         attNames = ['Customer Tier Classificiation (K-means).xlsx','Customer Tier Profile (K-means).xlsx','Customer Tier Classificiation (GMM).xlsx','Customer Tier Profile (GMM).xlsx']
         myDBWriter = AzureDBWriter(None, None)
-        myDBWriter.auto_send_email(outputDfs=attDfs, attachmentNames=attNames, emailSubject="Monthly Cust Tier [NO-REPLY]")
+        myDBWriter.auto_send_email(outputDfs=attDfs, attachmentNames=attNames, emailSubject="Monthly Cust Tier [NO-REPLY]", recipients=['andrew.chen@enerlites.com'])
 
 # Testing Section Below for this module
 if __name__ == "__main__":
