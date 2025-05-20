@@ -21,11 +21,6 @@ b) Gaussian Mixture model (soft assignment)             --> soft clustering with
 '''
 import pandas as pd
 import numpy as np
-import openpyxl
-import os 
-from dotenv import load_dotenv
-from pathlib import Path 
-from sqlalchemy import create_engine
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
@@ -36,43 +31,15 @@ import scipy.stats as stats
 from scipy.stats import shapiro
 from k_means_constrained import KMeansConstrained           # use constrained k-means to force at least 10 customers in each tier
 import re
-import urllib
-import logging
 from shared.azureDBWriter import *                          # import packages and modules
+from .advAnalyticsModel import AdvAnalyticsModel
 
-class CustTierClustering:
+class CustTierClustering(AdvAnalyticsModel):
     # Read model input table from Azure db to Python Memory
     def __init__(self):
-        load_dotenv()           # load the .env vars
-        ODBC_18_CONN = urllib.parse.quote_plus(
-            f"Driver={{ODBC Driver 18 for SQL Server}};"
-            f"Server=tcp:{os.getenv('DB_SERVER')},1433;"
-            f"Database=enerlitesDB;"
-            f"Uid=sqladmin;"
-            f"Pwd={os.getenv('DB_PASS')};"
-            f"Encrypt=yes;"
-            f"TrustServerCertificate=no;"
-            f"Connection Timeout=30;"
-        )
-        self.DB_CONN = f"mssql+pyodbc:///?odbc_connect={ODBC_18_CONN}"
-        self.AZ_ENGINE = create_engine(self.DB_CONN)
-        self.SQLQuery = 'SELECT * FROM modeling.customer_tier_input;'
-        with self.AZ_ENGINE.connect() as conn:
-            conn.execution_options(isolation_level="AUTOCOMMIT")\
-                .execute(text("EXEC modeling.sp_custTierInput;"))   # execute the T-SQL procedure before input table load
-            self.inputDf = pd.read_sql(self.SQLQuery, conn)         # store modeling input (read from db)
+        super().__init__("sp_custTierInput", "customer_tier_input")
 
-        # set up class level logger in Azure Prod env
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.logger.setLevel(logging.INFO)
-
-    # Load the cust Tier result back to Supabase
-    def loadModelResBack2DB(self, outputDf, schema, tableName):
-        with self.AZ_ENGINE.connect() as conn:
-            outputDf.to_sql(tableName, con = conn, schema=schema, if_exists = "replace", index =False)
-        self.logger.info(f"[AZURE] loadModelResBack2DB LOAD {outputDf.shape} 2 \'{tableName}\'!\n")
-
-    # Define model pipeline before model invocation
+    # Overwrite Abstract preprocess_pip line func (for Unsupervised ML)
     def preprocess_pip(self):
         cust_df = self.inputDf
         cols = cust_df.columns
