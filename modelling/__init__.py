@@ -1,3 +1,3 @@
 from .custTier import *
-from .demandForcast import * 
+from .predictDemand import * 
 from .advAnalyticsModel import *

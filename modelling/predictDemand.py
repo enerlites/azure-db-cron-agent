@@ -13,40 +13,15 @@ from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
 import scipy.stats as stats
 import pickle
+from advAnalyticsModel import AdvAnalyticsModel
 
-# Load environment variables
-cur_file_path = Path(__file__).resolve()
-env_path = cur_file_path.parent.parent / '.env'
-load_dotenv(env_path)
-DB_URL = os.getenv("DATABASE_URL")
+class DemandForecast (AdvAnalyticsModel):
+    def __init__(self):
+        super().__init__("sp_demandForecastInput", "demandForecastInput")
 
-# Load the model input table from Supabase
-def read_model_from_supabase(table):
-    try:
-        engine = create_engine(DB_URL)
-        print(f"Load '{table}' from Supabase !!")
-        model_df = pd.read_sql(f"SELECT * FROM {table}", engine)
-        model_df.proj_type = model_df.proj_type.fillna('Other')
-        return model_df
-    except Exception as e:
-        print("Failed to read table from Supabase")
-
-# write random forest reg res to excel file
-def writeSkuPrice2Excel(df, file_path):
-    # prepare default tab for model input  
-    def_df = None
-    def_df = df.groupby(["sku_pk"], as_index = False, observed = False).agg(
-        price_floor = ('price', 'min'),
-        price_ceil = ('price', 'max')
-    )
-    def_df["new price"] = [np.nan] * def_df.shape[0]
-
-    # xlsx not exist --> create new sheet and create xlsx
-    if not os.path.exists(file_path):
-
-        # subset sku with high price adj frequency (wait for new price assignment)
-        with pd.ExcelWriter(file_path, engine="openpyxl", mode="w") as wrtr:
-            def_df.to_excel(excel_writer = wrtr, sheet_name = "sku price adj (high freq)", index = False)
+    # Overwrite Abstract preprocess_pip func (demand Forecast Task)
+    def preprocess_pip(self):
+        return super().preprocess_pip()
 
 # Define adjusted R^2
 def adjusted_R2(y_true, y_pred):
