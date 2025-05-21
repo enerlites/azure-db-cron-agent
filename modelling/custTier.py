@@ -32,7 +32,7 @@ from scipy.stats import shapiro
 from k_means_constrained import KMeansConstrained           # use constrained k-means to force at least 10 customers in each tier
 import re
 from shared.azureDBWriter import *                          # import packages and modules
-from .advAnalyticsModel import AdvAnalyticsModel
+from modelling.advAnalyticsModel import AdvAnalyticsModel
 
 class CustTierClustering(AdvAnalyticsModel):
     # Read model input table from Azure db to Python Memory

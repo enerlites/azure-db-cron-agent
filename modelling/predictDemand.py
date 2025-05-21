@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 import os 
 from dotenv import load_dotenv
-from pathlib import Path 
 from sqlalchemy import create_engine
 from sklearn.ensemble import RandomForestRegressor
 import xgboost as xgb
@@ -13,7 +12,9 @@ from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
 import scipy.stats as stats
 import pickle
-from advAnalyticsModel import AdvAnalyticsModel
+from modelling.advAnalyticsModel import AdvAnalyticsModel
+from shared.azureDBWriter import *
+import logging
 
 class DemandForecast (AdvAnalyticsModel):
     def __init__(self):
@@ -21,7 +22,45 @@ class DemandForecast (AdvAnalyticsModel):
 
     # Overwrite Abstract preprocess_pip func (demand Forecast Task)
     def preprocess_pip(self):
-        return super().preprocess_pip()
+        df = self.inputDf.copy()
+        predSkuStateCd = df.drop_duplicates(subset=['sku', 'state_cd'])[['sku', 'state_cd']]
+
+    
+    # Generate Demand Forecast Input: (sku, customer, region, price)
+    # Prompt users to enter an adjusted price with historical price stats based on (sku, customer, region)
+    # Output format: sku, customer, cust tier, region, price (min), price (median), price(max), price (std)
+    def generate_forecast_prompt (self):
+        df = self.inputDf.copy()
+        # print(df.columns.tolist())
+        inputHstRaw = df[['predPk', 'price']]
+        inputHst = inputHstRaw.groupby(by = ['predPk'], as_index=False)\
+                    .agg({
+                        'price': ['min', 'median', 'max', 'std', 'count']
+                    })
+        # rename the columns
+        newCols = ['predPk', 'price (min)', 'price (median)', 'price (max)', 'price (std)', 'num orders (5 years)']
+        inputHst.columns = newCols
+        inputHst.loc[:,'sku'] = inputHst['predPk'].apply(lambda x: x.split("@")[0])
+        inputHst.loc[:,'state'] = inputHst['predPk'].apply(lambda x: x.split("@")[1])
+        inputHst = inputHst[['sku','state'] + newCols]
+
+        # append price adjustment col
+        inputHst.loc[:, "price adjusted"] = [np.nan] * inputHst.shape[0]
+
+        return inputHst
+
+    # Send Model Input Prompt / Demand Forecast as attachments to email
+    def monthly_demandForecast(self):
+
+        # prepare for email sent
+        myDBWriter = AzureDBWriter(None, None)
+        attDfs, attNames = [], []
+        inputHst = self.generate_forecast_prompt()
+        attDfs.append(inputHst)
+        attNames.append("Forecast Prompt.xlsx")
+
+        # send out attachments (ask for adjusted price input)
+        myDBWriter.auto_send_email(outputDfs=attDfs, attachmentNames=attNames, emailSubject="Monthly Demand Forecast [NO-REPLY]", recipients=['andrew.chen@enerlites.com'])
 
 # Define adjusted R^2
 def adjusted_R2(y_true, y_pred):
@@ -185,18 +224,3 @@ def demand_forcast(myModel, input_df, newPrice_df):
     quantity_forcast = myModel.predict(test_df)
     return quantity_forcast, test_df
 
-# Test section with pickle
-if __name__ == "__main__":
-    # Load data for 35 SKU, price_model pairs with frequent price adjustments and abundant transactions
-    tree_input_df = read_model_from_supabase('tree_model_input')
-
-    X = tree_input_df[[col for col in tree_input_df.columns if col != "quantity"]]
-    rfr = None
-    if os.path.exists("rfr.pkl"):
-        with open("rfr.pkl", "rb") as fp:
-            rfr = pickle.load(fp)
-    pred_y = rfr.predict(X)
-    act_y = tree_input_df["quantity"].values.flatten()
-    print(pred_y)
-    print(act_y)
-    print(f"RFR has a Symmetic Mean Abs Percent Err of {smape(act_y, pred_y)}%")

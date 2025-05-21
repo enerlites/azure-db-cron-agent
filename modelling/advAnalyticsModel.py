@@ -31,8 +31,8 @@ class AdvAnalyticsModel(ABC):
         self._AZ_ENGINE = create_engine(self.__DB_CONN)
         self._SQLQuery = f'SELECT * FROM modeling.{InputTableName};'
         with self._AZ_ENGINE.connect() as conn:
-            conn.execution_options(isolation_level="AUTOCOMMIT")\
-                .execute(text(f"EXEC modeling.{ProcedureName};"))   # execute the T-SQL procedure before input table load
+            # conn.execution_options(isolation_level="AUTOCOMMIT")\
+            #     .execute(text(f"EXEC modeling.{ProcedureName};"))   # execute the T-SQL procedure before input table load
             self.inputDf = pd.read_sql(self._SQLQuery, conn)         # store modeling input (read from db)
 
         # set up class level logger in Azure Prod env
