@@ -40,7 +40,7 @@ class CustTierClustering(AdvAnalyticsModel):
         super().__init__("sp_custTierInput", "customer_tier_input")
 
     # Overwrite Abstract preprocess_pip line func (for Unsupervised ML)
-    def preprocess_pip(self):
+    def preprocess_pip(self, **kwargs):
         cust_df = self.inputDf
         cols = cust_df.columns
         cus_series = cust_df.customer
