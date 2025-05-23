@@ -3,7 +3,6 @@
 ## 📂 Table of Contents
 
 - [Overview](#overview)
-    5 Cron Schedulers to run based out of LA time
 - [Features](#features)
 - [Installation](#installation)
 - [Usage](#usage)
@@ -16,12 +15,14 @@
 
 ---
 
-## 🧠 Overview
+## Overview 🧠
 
-shared package define all OneDrive read, write, ETL modules that are widely used in modelling package and 5 cron task packages.
-a) When testing a single task at dev1 for example modelling functions, make sure that "runOnStartup" is set to False in 4 other tasks.
-b) Additionally, for faster testing, line 36-37 of advAnalyticsModel.py is commented. Make sure to uncomment this if you ever want to merge main.
-c) advAnalyticsModel.py defines parent class for modelling. The other models inherit from this class and overwrite abstract functions. 
+Shared package defining all OneDrive read/write ETL modules used across the modelling package and 5 cron task packages.
+
+**Usage Notes**:
+- When testing a single task (e.g., `modelling` in `dev1`), ensure `runOnStartup` is set to `False` for the other 4 tasks.
+- For faster testing, lines 36–37 in `advAnalyticsModel.py` are commented out. Uncomment before merging into `main`.
+- `advAnalyticsModel.py` defines the base class for modelling. Other models inherit from it and override abstract methods.
 ---
 
 ## 🚀 Features
@@ -33,7 +34,7 @@ c) advAnalyticsModel.py defines parent class for modelling. The other models inh
 
 ```bash
 # Clone this repository
-git clone https://github.com/your-username/your-project.git
+git clone https://github.com/enerlites/azure-db-cron-agent.git
 git checkout dev1
 
 # Install dependencies
