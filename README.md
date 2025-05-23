@@ -20,7 +20,7 @@
 Shared package defining all OneDrive read/write ETL modules used across the modelling package and 5 cron task packages.
 
 **Usage Notes**:
-- When testing a single task (e.g., `modelling` in `dev1`), ensure `runOnStartup` is set to `False` for the other 4 tasks.
+- When testing a single task (e.g., `modelling` in `dev1`), ensure `runOnStartup` of respective `function.json` is set to `False` for the other 4 tasks.
 - For faster testing, lines 36–37 in `advAnalyticsModel.py` are commented out. Uncomment before merging into `main`.
 - `advAnalyticsModel.py` defines the base class for modelling. Other models inherit from it and override abstract methods.
 ---
