@@ -80,9 +80,10 @@ class DemandForecast (AdvAnalyticsModel):
         
         # hyper param tunning
         param_grid = {
-            'xgb__n_estimators': [50, 100],
-            'xgb__max_depth': [3, 5],
-            'xgb__learning_rate': [0.01, 0.1]
+            'xgb__n_estimators': [300,500,800],
+            'xgb__max_depth': [6,8,10],
+            'xgb__learning_rate': [0.01, 0.005],
+            'xgb__reg_lambda': [0, 1,2]
         }
 
         # define custom scorers
@@ -103,8 +104,8 @@ class DemandForecast (AdvAnalyticsModel):
         # store the optimal model
         self._trainer = xgbGridCv.best_estimator_
 
-        print(f"[DEBUG] Best SMAPE: {-xgbGridCv.best_score_:.4f}")
-        print(f"[DEBUG] Best Params: {xgbGridCv.best_params_}")
+        self.logger.info(f"[AZURE] train_XGBoostRegressor's best SMAPE: {xgbGridCv.best_score_:.4f}")
+        self.logger.info(f"[AZURE] train_XGBoostRegressor's best SMAPE: {xgbGridCv.best_params_}")
 
     # Generate Demand Forecast Input: (sku, customer, region, price)
     # Prompt users to enter an adjusted price with historical price stats based on (sku, customer, region)
