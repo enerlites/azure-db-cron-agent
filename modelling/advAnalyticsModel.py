@@ -6,7 +6,7 @@ Provide Generic class method & fields
 '''
 import pandas as pd
 import numpy as np
-from sklearn.metrics import make_scorer, r2_score
+from sklearn.metrics import r2_score
 from abc import ABC, abstractmethod
 import os 
 from dotenv import load_dotenv

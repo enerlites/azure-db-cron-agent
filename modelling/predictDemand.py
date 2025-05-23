@@ -2,24 +2,21 @@ import pandas as pd
 import numpy as np
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
-from sklearn.ensemble import RandomForestRegressor
 from xgboost import XGBRegressor
 from sklearn.model_selection import GridSearchCV, KFold
-from sklearn.metrics import make_scorer, r2_score
+from sklearn.metrics import make_scorer
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
-import scipy.stats as stats
 import pickle                               # Save the trained model
 from modelling.advAnalyticsModel import AdvAnalyticsModel
 from shared.azureDBWriter import *
-import logging
 
 class DemandForecast (AdvAnalyticsModel):
     def __init__(self):
         super().__init__("sp_demandForecastInput", "demandForecastInput")
 
-    # Overwrite preprocess_pip under demand forecast context
+    # Define preprocessor pipeline
     # Concatenate (sku, '@', Region) as predPK (before running this pipline)
     # Generate PED / coefficient of variance metrics
     # Perform inputDf split --> acquire predictors and response variable
@@ -45,14 +42,10 @@ class DemandForecast (AdvAnalyticsModel):
         df['coefvar_q'] = df['stdQ'] / df['mueQ']
         df.drop(columns=['stdP','stdQ','mueP', 'mueQ'], axis= 1, inplace= True)
 
-        # identify cat cols
+        # identify cat / num cols
         catCols = df.select_dtypes(include=['object', 'category']).columns.tolist()
-
-        # identify numeric cols
-        numCols = list(set(df.columns.tolist()).difference(set(catCols))).remove('quantity')
-
-        print(f"[preprocess_pip] DETECTS cat columns are {catCols}\n")
-        print(f"[preprocess_pip] DETECTS cols are {df.columns.tolist()}\n")
+        numCols = list(set(df.columns.tolist()) - set(catCols))
+        numCols.remove('quantity')
 
         # modelling pipeline
         num_trans = Pipeline(
@@ -72,15 +65,14 @@ class DemandForecast (AdvAnalyticsModel):
             ]
         )
 
-        # store modelling preprocessor
+        # Only mount the preprocessor pipeline (No actual transformation)
         self._processor = preprocessor
-        # store predictors and response vars back to the model fields
-        X = df.drop(columns = ["quantity"])
-        self._X = preprocessor.fit_transform(X)
-        self._y = self.inputDf["quantity"].reshape(-1,1)
+        self._X, self._y = df.loc[:, df.columns != 'quantity'], df['quantity']
+        self.logger.info(f"[AZURE] preprocess_pip (demand Forecast) Mounted !\n")
     
     # XGBoost Regressor to train the dateset
     def train_XGBoostRegressor(self):
+        # define training pipeline
         xgb_pipeline = Pipeline([
                 ('preprocessor', self._processor),
                 ('xgb', XGBRegressor(objective='reg:squarederror', random_state=42))
@@ -105,16 +97,15 @@ class DemandForecast (AdvAnalyticsModel):
             cv = kfcv,
             scoring={"Adjusted_R2": adj_r2_eval, "SMAPE": smape_eval},
             refit="SMAPE",                                                      # use custom SMAPE to evaluate the model
-            n_jobs=-1, verbose=0
+            n_jobs=1, verbose=0
         ).fit(self._X, self._y)
 
         # store the optimal model
         self._trainer = xgbGridCv.best_estimator_
 
-        print(f"[DEBUG] train_XGBoostRegressor CV result:\n{xgbGridCv.cv_results_}\n")
+        print(f"[DEBUG] Best SMAPE: {-xgbGridCv.best_score_:.4f}")
+        print(f"[DEBUG] Best Params: {xgbGridCv.best_params_}")
 
-
-    
     # Generate Demand Forecast Input: (sku, customer, region, price)
     # Prompt users to enter an adjusted price with historical price stats based on (sku, customer, region)
     # Output format: sku, customer, cust tier, region, price (min), price (median), price(max), price (std)
@@ -152,5 +143,5 @@ class DemandForecast (AdvAnalyticsModel):
 
         # Preprocess the inputDf
         self.preprocess_pip()
-        # self.train_XGBoostRegressor()
+        self.train_XGBoostRegressor()
 
