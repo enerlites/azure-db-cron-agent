@@ -1,8 +1,40 @@
 # azure-db-cron-agent
-## Repo for scheduling all Azure-related cron jobs. Must be deployed and maintained over Azure (function app). 
+
+## 📂 Table of Contents
+
+- [Overview](#overview)
+    5 Cron Schedulers to run based out of LA time
+- [Features](#features)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Project Structure](#project-structure)
+- [Configuration](#configuration)
+- [Testing](#testing)
+- [Results](#results)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
+
+## 🧠 Overview
+
+shared package define all OneDrive read, write, ETL modules that are widely used in modelling package and 5 cron task packages.
+a) When testing a single task at dev1 for example modelling functions, make sure that "runOnStartup" is set to False in 4 other tasks.
+b) Additionally, for faster testing, line 36-37 of advAnalyticsModel.py is commented. Make sure to uncomment this if you ever want to merge main.
+c) advAnalyticsModel.py defines parent class for modelling. The other models inherit from this class and overwrite abstract functions. 
+---
+
+## 🚀 Features
 
 
-## Objectives and Environment Setup:
-### a) Multiple Cron jobs with shared logic and should be deployed over Azure Function App with defined app vars and logics.
-### b) monthly sku promo cron jub scheduled to run on 12:30 AM on 15 th of each month.
-### c) Potentially update the ERP / CRM logic with azure cron automation.
+---
+
+## 🛠 Installation
+
+```bash
+# Clone this repository
+git clone https://github.com/your-username/your-project.git
+git checkout dev1
+
+# Install dependencies
+pip install -r requirements.txt
