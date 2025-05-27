@@ -7,6 +7,7 @@
 - [Installation](#installation)
 - [Usage](#usage)
 - [Project Structure](#project-structure)
+- [Workflow](#workflow)
 - [Configuration](#configuration)
 - [Testing](#testing)
 - [Results](#results)
@@ -83,6 +84,62 @@ The project is organized into several folders, each responsible for a specific s
   - `predictDemand.py`: Implements the `DemandForecast` class, also inheriting from `AdvAnalyticsModel`. It preprocesses sales data and trains an XGBoost Regressor to forecast product demand.
 
 - **`shared/`**: This package (implicitly, as it's imported by tasks and models) likely contains shared utility functions, database interaction modules (like `azureDBWriter.py`), and common job definitions used across different Azure Functions and modelling scripts. For example, it would contain the definitions for `daily_comp_pricing_job`, `monthly_netsuite_erp_job`, etc.
+
+---
+
+## 🔄 Workflow
+
+The `azure-db-cron-agent` project orchestrates a series of automated tasks using Azure Functions. These functions are triggered on predefined schedules (daily or monthly) to perform data extraction, transformation, loading (ETL), and advanced analytics.
+
+**General Flow:**
+
+1.  **Scheduled Trigger**: Azure Functions are initiated by timer triggers as defined in their respective `function.json` files.
+2.  **Function Execution**: The `__init__.py` script within each function's folder is executed.
+3.  **Core Logic Invocation**:
+    *   Most tasks invoke specific job functions from the `shared` package (e.g., `daily_comp_pricing_job`, `monthly_netsuite_erp_job`). These jobs handle interactions with external systems like OneDrive, NetSuite (indirectly), and perform data operations.
+    *   The `monthlyCustSegTask` invokes models from the `modelling` package (`CustTierClustering` and `DemandForecast`). These models perform complex calculations, machine learning tasks, and data analysis.
+4.  **Data Interaction**:
+    *   The `modelling` package's base class, `AdvAnalyticsModel`, handles connections to the Azure SQL Database for fetching input data and storing model results.
+    *   The `shared.azureDBWriter` module is likely used by various jobs for database write operations and sending email notifications with attachments.
+5.  **Outputs & Results**:
+    *   Processed data and model outputs are stored in the Azure SQL Database.
+    *   Some tasks generate reports or files (e.g., promotion brochures) which might be sent via email or stored.
+    *   Email notifications are sent for certain tasks, often including results as attachments.
+
+**Text-based Visualization:**
+
+```
++------------------------+
+| Scheduled Triggers     |
+| (NCRONTAB Expressions  |
+|  in function.json)     |
++-----------+------------+
+            | (Initiates)
+            v
++------------------------+     +------------------------------------------------------+
+| Azure Functions        |---->| Core Logic Packages                                  |
+| (e.g.,                 |     |                                                      |
+|  dailyCompPricingTask, |     |   +----------------------+   +---------------------+ |
+|  monthlyCustSegTask,   |     |   | modelling/           |   | shared/             | |
+|  monthlyERPTask,       |     |   | - CustTierClustering |   | - ETL Jobs (e.g.,   | |
+|  monthlySkuPricingTask,|     |   | - DemandForecast     |   |   daily_comp_pricing| |
+|  monthlySkuPromoTask)  |     |   | - AdvAnalyticsModel  |   |   _job)             | |
++------------------------+     |   +-------+--------------+   | - azureDBWriter     | |
+                               |           | (DB I/O)         |   (DB I/O, Email)   | |
+                               |           |                  +--------+------------+ |
+                               |           +---------------------------+              |
+                               +------------------------------------------------------+
+                                           |
+                                           | (Data I/O, File Operations, API Calls, Notifications)
+                                           v
+                  +------------------------+--------------------------+
+                  | Data Stores & Outputs  | External Systems         |
+                  +------------------------+--------------------------+
+                  | - Azure SQL Database   | - OneDrive (via shared)  |
+                  | - Email Notifications  | - NetSuite (indirectly   |
+                  | - Excel/CSV Reports    |   via ERP job in shared) |
+                  +------------------------+--------------------------+
+```
 
 ---
 
